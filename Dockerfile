@@ -28,4 +28,4 @@ RUN useradd -m mimiruser && chown -R mimiruser:mimiruser /app
 USER mimiruser
 
 # Launch FastAPI/NiceGUI via Uvicorn
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "59056"]
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "59056"]
