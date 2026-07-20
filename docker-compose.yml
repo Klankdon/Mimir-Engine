@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  # --- Mimir Engine (FastAPI + NiceGUI Control Panel) ---
+  mimir-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mimir_engine
+    restart: unless-stopped
+    ports:
+      # Exposes NiceGUI Control Panel & API on custom port 59056
+      - "${ENGINE_PORT:-59056}:59056"
+    environment:
+      - DB_HOST=mimir-db
+      - DB_PORT=5432
+      - DB_NAME=${POSTGRES_DB:-mimir_db}
+      - DB_USER=${POSTGRES_USER:-mimir_user}
+      - DB_PASSWORD=${POSTGRES_PASSWORD:-mimir_secret_password}
+    depends_on:
+      mimir-db:
+        condition: service_healthy
+    volumes:
+      # Optional: bind mount local raw DOCID text log folder
+      - ./docid_storage:/app/storage
+    networks:
+      - mimir-network
+
+  # --- Database Node (PostgreSQL + pgvector) ---
+  mimir-db:
+    image: pgvector/pgvector:pg16
+    container_name: mimir_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-mimir_db}
+      POSTGRES_USER: ${POSTGRES_USER:-mimir_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mimir_secret_password}
+    ports:
+      # Bound to loopback (127.0.0.1) on high non-standard port 59057 for host safety
+      - "127.0.0.1:${DB_PORT:-59057}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mimir_user} -d ${POSTGRES_DB:-mimir_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - mimir-network
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  mimir-network:
+    driver: bridge
