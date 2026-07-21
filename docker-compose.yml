@@ -17,6 +17,8 @@ services:
       - DB_NAME=${POSTGRES_DB:-mimir_db}
       - DB_USER=${POSTGRES_USER:-mimir_user}
       - DB_PASSWORD=${POSTGRES_PASSWORD:-mimir_secret_password}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       mimir-db:
         condition: service_healthy

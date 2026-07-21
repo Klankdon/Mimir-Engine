@@ -1,0 +1,62 @@
+# ==========================================
+# 1. SECRETS & ENVIRONMENT CONFIGS
+# ==========================================
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+
+# ==========================================
+# 2. PYTHON CACHE & VIRTUAL ENVS
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# ==========================================
+# 3. LOCAL DATA & VECTOR STORAGE
+# ==========================================
+# Local database mounts or vector storage files
+storage/
+docids/
+*.db
+*.sqlite3
+pgdata/
+postgres_data/
+
+# ==========================================
+# 4. IDEs & OS METADATA
+# ==========================================
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ==========================================
+# 5. DOCKER & LOGS
+# ==========================================
+*.log
+docker-compose.override.yml
