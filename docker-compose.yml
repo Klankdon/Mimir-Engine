@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # --- Mimir Engine (FastAPI + NiceGUI Control Panel) ---
   mimir-app:
@@ -47,6 +45,21 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - mimir-network
+
+  # --- Database GUI Workbench (NocoDB) ---
+  mimir-nocodb:
+    image: nocodb/nocodb:latest
+    container_name: mimir_nocodb
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      NC_DB: "pg://mimir-db:5432?u=${POSTGRES_USER:-mimir_user}&p=${POSTGRES_PASSWORD:-mimir_secret_password}&d=${POSTGRES_DB:-mimir_db}"
+    depends_on:
+      mimir-db:
+        condition: service_healthy
     networks:
       - mimir-network
 

@@ -20,11 +20,15 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application source code
 COPY . .
 
+# Pre-create data/storage directories so mimiruser owns them
+RUN mkdir -p /app/mimir_data /app/docid_storage
+
+# Create an unprivileged user for security isolation and assign ownership
+RUN useradd -m mimiruser && chown -R mimiruser:mimiruser /app
+
 # Expose the non-standard internal engine port
 EXPOSE 59056
 
-# Create an unprivileged user for security isolation
-RUN useradd -m mimiruser && chown -R mimiruser:mimiruser /app
 USER mimiruser
 
 # Launch FastAPI/NiceGUI via Uvicorn

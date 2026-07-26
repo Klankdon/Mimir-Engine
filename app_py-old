@@ -5,13 +5,11 @@ import os
 import re
 import time
 import uuid
-import zipfile
 from datetime import datetime
 from io import BytesIO
 from typing import List, Optional
 
 from fastapi import APIRouter, FastAPI, HTTPException
-from fastapi.staticfiles import StaticFiles
 from nicegui import app as nicegui_app, ui
 from PIL import Image
 from pydantic import BaseModel
@@ -20,43 +18,10 @@ from pydantic import BaseModel
 from llm_client import PROVIDERS, stream_llm_response
 
 # ==========================================
-# 0. DIRECTORY & STORAGE BOOTSTRAP
-# ==========================================
-MIMIR_BASE_DIR = os.getenv("MIMIR_DATA_DIR", "./mimir_data")
-DIRS = {
-    "cards": os.path.join(MIMIR_BASE_DIR, "cards"),
-    "lorebooks": os.path.join(MIMIR_BASE_DIR, "lorebooks"),
-    "skins": os.path.join(MIMIR_BASE_DIR, "skins"),
-    "backups": os.path.join(MIMIR_BASE_DIR, "database_backups"),
-    "temp": os.path.join(MIMIR_BASE_DIR, "temp_upload"),
-}
-
-for d in DIRS.values():
-    os.makedirs(d, exist_ok=True)
-
-# Default Skin Bootstrap
-DEFAULT_SKIN_MANIFEST = {
-    "skin_name": "Default Dark",
-    "version": "0.1.1",
-    "author": "Mimir Engine",
-    "css_theme": "theme.css",
-    "description=Containerized vector memory proxy & control panel for local LLMs",
-}
-default_skin_dir = os.path.join(DIRS["skins"], "default")
-os.makedirs(default_skin_dir, exist_ok=True)
-manifest_path = os.path.join(default_skin_dir, "manifest.json")
-if not os.path.exists(manifest_path):
-    with open(manifest_path, "w") as f:
-        json.dump(DEFAULT_SKIN_MANIFEST, f, indent=2)
-
-# ==========================================
 # 1. INITIALIZE FASTAPI & STATE
 # ==========================================
 app = FastAPI(title="Mimir Engine & Client", version="1.0.0")
 st_router = APIRouter(prefix="/api/v1/st", tags=["SillyTavern Integration"])
-
-# Mount the skins directory so styles & assets are publicly accessible
-app.mount("/skins", StaticFiles(directory=DIRS["skins"]), name="skins")
 
 # --- In-Memory Application State ---
 session_state = {
@@ -74,14 +39,6 @@ session_state = {
     "last_memory_recall": [],
     "active_lorebook": [],
     "token_counter": 120,
-    "mobile_mode": False,
-    "active_skin": "default",
-    # --- System Metrics ---
-    "stack_status": "green",  # 'green', 'yellow', 'red'
-    "doc_id_count": 1248,
-    "doc_id_max": 5000,
-    "pgvector_mb": 42.8,
-    "pgvector_max_mb": 1000.0,
     # --- LLM Configuration State ---
     "llm_config": {
         "provider": "Local (Ollama)",
@@ -90,43 +47,6 @@ session_state = {
         "temperature": 0.7,
     },
 }
-
-# Add Custom CSS for Gauges, Traffic Lights & Mobile Overrides
-ui.add_head_html("""
-<style>
-  /* Traffic Light Stack Indicator */
-  .traffic-light { display: flex; gap: 6px; align-items: center; background: #020617; padding: 4px 8px; border-radius: 9999px; border: 1px solid #1e293b; }
-  .light-dot { width: 10px; height: 10px; border-radius: 50%; opacity: 0.2; transition: all 0.3s ease; }
-  .light-dot.red { background: #ef4444; }
-  .light-dot.yellow { background: #eab308; }
-  .light-dot.green { background: #10b981; }
-  .light-dot.active { opacity: 1.0; box-shadow: 0 0 8px currentColor; }
-
-  /* HUD Pixel Gauge Bar */
-  .hud-gauge-frame { width: 100%; height: 8px; background: #020617; border-radius: 4px; overflow: hidden; border: 1px solid #1e293b; margin-top: 4px; }
-  .hud-gauge-fill { height: 100%; transition: width 0.4s ease; }
-
-  /* Forced Mobile Layout Override */
-  .mobile-layout-active .chat-workspace { flex-direction: column !important; }
-  .mobile-layout-active .chat-feed-column { width: 100% !important; }
-  .mobile-layout-active .control-panel-column { width: 100% !important; }
-</style>
-""")
-
-
-def apply_active_skin_css():
-    """Injects the active skin's CSS file into NiceGUI head cleanly."""
-    try:
-        active_skin = app.storage.user.get(
-            "active_skin", session_state.get("active_skin", "default")
-        )
-    except Exception:
-        active_skin = session_state.get("active_skin", "default")
-
-    skin_css_url = f"/skins/{active_skin}/style.css"
-    ui.add_head_html(
-        f'<link id="active-skin-css" rel="stylesheet" href="{skin_css_url}">'
-    )
 
 
 # ==========================================
@@ -199,18 +119,6 @@ def check_lorebook_triggers(user_text: str) -> list[str]:
     return triggered_content
 
 
-def extract_skin_zip(file_bytes: bytes, skin_filename: str) -> str:
-    """Extracts a .mimirskin or .zip theme package into the skins storage folder."""
-    skin_name = os.path.splitext(skin_filename)[0]
-    target_dir = os.path.join(DIRS["skins"], skin_name)
-    os.makedirs(target_dir, exist_ok=True)
-
-    with zipfile.ZipFile(BytesIO(file_bytes), "r") as zip_ref:
-        zip_ref.extractall(target_dir)
-
-    return skin_name
-
-
 # ==========================================
 # 3. REST API ENDPOINTS
 # ==========================================
@@ -271,9 +179,7 @@ app.include_router(st_router)
 @ui.page("/")
 def dashboard():
     ui.colors(primary="#6366f1", dark="#0f172a")
-    apply_active_skin_css()
 
-    # --- TOP NAVIGATION HEADER ---
     with ui.header().classes(
         "bg-slate-900 justify-between items-center px-6 py-3 border-b border-slate-800"
     ):
@@ -284,148 +190,74 @@ def dashboard():
             ui.button(
                 "Launch Chat Client 💬",
                 on_click=lambda: ui.navigate.to("/chat"),
-            ).classes("bg-indigo-600 hover:bg-indigo-500 text-xs font-bold")
+            ).classes("bg-indigo-600 hover:bg-indigo-500 text-xs")
             ui.badge("Postgres: Connected", color="emerald").classes("px-3 py-1")
-            ui.label("Port: 59056").classes("text-slate-400 text-sm font-mono")
+            ui.label("Port: 59056").classes("text-slate-400 text-sm")
 
-    # --- MAIN DASHBOARD CONTAINER ---
     with ui.column().classes(
         "w-full max-w-7xl mx-auto p-6 gap-6 bg-slate-950 min-h-screen text-slate-100"
     ):
-        # --- HUD STATUS HEADER (VIDEO GAME STYLE GAUGES) ---
-        with ui.row().classes(
-            "w-full gap-4 border-b border-slate-800 pb-6 items-stretch"
-        ):
-            # Gauge 1: Container Stack Status (Traffic Light)
+        with ui.row().classes("w-full gap-4 border-b border-slate-800 pb-6"):
             with ui.card().classes(
-                "flex-1 bg-slate-900 border border-slate-800 p-4 justify-between"
-            ).tooltip("Docker Container Stack: All services operational"):
+                "flex-1 bg-slate-900 border border-slate-800 p-4"
+            ):
                 ui.label("CONTAINER STACK").classes(
-                    "text-xs font-semibold text-slate-400 tracking-wider"
+                    "text-xs font-semibold text-slate-400"
                 )
-                with ui.row().classes("items-center justify-between w-full mt-1"):
-                    ui.label("Running").classes("text-xl font-bold text-emerald-400")
-                    # Traffic Light Widget
-                    with ui.element("div").classes("traffic-light"):
-                        ui.element("div").classes(
-                            f"light-dot red {'active' if session_state['stack_status'] == 'red' else ''}"
-                        )
-                        ui.element("div").classes(
-                            f"light-dot yellow {'active' if session_state['stack_status'] == 'yellow' else ''}"
-                        )
-                        ui.element("div").classes(
-                            f"light-dot green {'active' if session_state['stack_status'] == 'green' else ''}"
-                        )
-                ui.label("Up time: Active (Port 59056)").classes(
-                    "text-xs text-slate-500 mt-2 font-mono"
+                ui.label("Running").classes(
+                    "text-2xl font-bold text-emerald-400 mt-1"
+                )
+                ui.label("Up time: Active").classes(
+                    "text-xs text-slate-500 mt-2"
                 )
 
-            # Gauge 2: Indexed Memories & Dedicated Storage Allocation
-            doc_pct = int(
-                (session_state["doc_id_count"] / session_state["doc_id_max"]) * 100
-            )
             with ui.card().classes(
-                "flex-1 bg-slate-900 border border-slate-800 p-4 justify-between"
-            ).tooltip(
-                f"Indexed Memories: {session_state['doc_id_count']} / {session_state['doc_id_max']} Allocated Slots"
+                "flex-1 bg-slate-900 border border-slate-800 p-4"
             ):
                 ui.label("INDEXED MEMORIES").classes(
-                    "text-xs font-semibold text-slate-400 tracking-wider"
+                    "text-xs font-semibold text-slate-400"
                 )
-                with ui.row().classes("items-center justify-between w-full mt-1"):
-                    ui.label(f"{session_state['doc_id_count']:,} DOCIDs").classes(
-                        "text-xl font-bold text-indigo-400"
-                    )
-                    ui.label(f"{doc_pct}% Cap").classes("text-xs text-indigo-300 font-mono")
-                # Pixel Progress Gauge
-                with ui.element("div").classes("hud-gauge-frame"):
-                    ui.element("div").classes("hud-gauge-fill bg-indigo-500").style(
-                        f"width: {doc_pct}%;"
-                    )
+                ui.label("1,248 DOCIDs").classes(
+                    "text-2xl font-bold text-indigo-400 mt-1"
+                )
                 ui.label("Total Chunks: 3,890").classes(
-                    "text-xs text-slate-500 mt-2 font-mono"
+                    "text-xs text-slate-500 mt-2"
                 )
 
-            # Gauge 3: PGVector Storage Indicator
-            vector_pct = int(
-                (session_state["pgvector_mb"] / session_state["pgvector_max_mb"]) * 100
-            )
             with ui.card().classes(
-                "flex-1 bg-slate-900 border border-slate-800 p-4 justify-between"
-            ).tooltip(
-                f"pgvector Capacity: {session_state['pgvector_mb']} MB / {session_state['pgvector_max_mb']} MB Allocated"
+                "flex-1 bg-slate-900 border border-slate-800 p-4"
             ):
                 ui.label("PGVECTOR STORAGE").classes(
-                    "text-xs font-semibold text-slate-400 tracking-wider"
+                    "text-xs font-semibold text-slate-400"
                 )
-                with ui.row().classes("items-center justify-between w-full mt-1"):
-                    ui.label(f"{session_state['pgvector_mb']} MB").classes(
-                        "text-xl font-bold text-cyan-400"
-                    )
-                    ui.label(f"{vector_pct}% Used").classes("text-xs text-cyan-300 font-mono")
-                # Pixel Progress Gauge
-                with ui.element("div").classes("hud-gauge-frame"):
-                    ui.element("div").classes("hud-gauge-fill bg-cyan-400").style(
-                        f"width: {vector_pct}%;"
-                    )
+                ui.label("42.8 MB").classes(
+                    "text-2xl font-bold text-cyan-400 mt-1"
+                )
                 ui.label("Table: memory_db").classes(
-                    "text-xs text-slate-500 mt-2 font-mono"
+                    "text-xs text-slate-500 mt-2"
                 )
 
-        # --- EMBEDDED DATABASE CLI / NOCODB WORKBENCH DRAWER ---
-        with ui.expansion(
-            "📊 Database CLI & NocoDB Workbench (Postgres Direct)",
-            icon="table_chart",
-        ).classes(
-            "w-full bg-slate-900 border border-slate-800 rounded-lg text-slate-200 overflow-hidden"
-        ):
-            with ui.column().classes("w-full p-2 h-96 gap-2"):
-                ui.label(
-                    "Embedded Workbench: Query and manipulate `memory_db` directly."
-                ).classes("text-xs text-slate-400 px-2")
-                # Direct Embed via iFrame (Points to local NocoDB or DB Web Tool)
-                ui.html(
-                    '<iframe src="http://localhost:8080" class="w-full h-80 rounded border border-slate-800 bg-slate-950"></iframe>'
+        with ui.row().classes("w-full gap-6"):
+            with ui.column().classes("w-1/3 gap-4"):
+                ui.label("Engine Controls").classes(
+                    "text-lg font-semibold text-slate-200"
                 )
-
-        # --- LIVE INGESTION STREAM & SYSTEM LOGS ---
-        with ui.column().classes("w-full gap-2 mt-2"):
-            ui.label("Live Ingestion Stream").classes(
-                "text-lg font-semibold text-slate-200"
-            )
-            log_view = ui.log(max_lines=100).classes(
-                "w-full h-48 bg-slate-900 border border-slate-800 font-mono text-xs text-emerald-400 p-4 rounded-lg"
-            )
-            log_view.push(
-                f"[{datetime.now().strftime('%H:%M:%S')}] Mimir Engine initialized on port 59056."
-            )
-            log_view.push(
-                f"[{datetime.now().strftime('%H:%M:%S')}] Connected to Postgres (pgvector) container at 127.0.0.1:59057."
-            )
-
-        # --- ADMIN / DEVELOPER CONSOLE DRAWER ---
-        with ui.expansion(
-            "🛠️ System Administration & Maintenance Console", icon="admin_panel_settings"
-        ).classes(
-            "w-full bg-slate-950 border border-slate-800 rounded-lg text-slate-300 mt-4"
-        ):
-            with ui.row().classes("w-full p-4 gap-4 items-center justify-between"):
                 ui.button(
                     "Restart Memory Worker",
                     icon="refresh",
                     on_click=lambda: log_view.push(
                         f"[{datetime.now().strftime('%H:%M:%S')}] Worker restarted."
                     ),
-                ).classes("bg-indigo-600 hover:bg-indigo-500 text-xs")
-
+                ).classes("w-full bg-indigo-600 hover:bg-indigo-500")
                 ui.button(
                     "Run Deduplication Sweep",
                     icon="cleaning_services",
                     on_click=lambda: log_view.push(
                         f"[{datetime.now().strftime('%H:%M:%S')}] Deduplication sweep started..."
                     ),
-                ).classes("bg-slate-800 border border-slate-700 hover:bg-slate-700 text-xs")
-
+                ).classes(
+                    "w-full bg-slate-800 border border-slate-700 hover:bg-slate-700"
+                )
                 ui.button(
                     "Purge Temporary Cache",
                     icon="delete_sweep",
@@ -433,7 +265,21 @@ def dashboard():
                         f"[{datetime.now().strftime('%H:%M:%S')}] Cache cleared."
                     ),
                 ).classes(
-                    "bg-rose-950 border border-rose-800 text-rose-300 hover:bg-rose-900 text-xs"
+                    "w-full bg-rose-950 border border-rose-800 text-rose-300 hover:bg-rose-900"
+                )
+
+            with ui.column().classes("w-2/3 gap-2"):
+                ui.label("Live Ingestion Stream").classes(
+                    "text-lg font-semibold text-slate-200"
+                )
+                log_view = ui.log(max_lines=100).classes(
+                    "w-full h-64 bg-slate-900 border border-slate-800 font-mono text-xs text-emerald-400 p-4 rounded"
+                )
+                log_view.push(
+                    f"[{datetime.now().strftime('%H:%M:%S')}] Mimir Engine initialized on port 59056."
+                )
+                log_view.push(
+                    f"[{datetime.now().strftime('%H:%M:%S')}] Connected to Postgres (pgvector) container at 127.0.0.1:59057."
                 )
 
 
@@ -443,105 +289,47 @@ def dashboard():
 @ui.page("/chat")
 def chat_client():
     ui.colors(primary="#6366f1", dark="#0f172a")
-    apply_active_skin_css()
-
-    workspace_container = None
-
-    def toggle_mobile_view():
-        session_state["mobile_mode"] = not session_state["mobile_mode"]
-        if workspace_container:
-            if session_state["mobile_mode"]:
-                workspace_container.classes(add="mobile-layout-active")
-            else:
-                workspace_container.classes(remove="mobile-layout-active")
-        ui.notify(
-            f"Mobile view {'enabled' if session_state['mobile_mode'] else 'disabled'}",
-            type="info",
-        )
 
     # --- MODAL 1: Asset Upload Dialog ---
     def open_import_dialog():
         with ui.dialog() as dialog, ui.card().classes(
             "bg-slate-900 border border-slate-800 p-6 w-96 text-slate-100"
         ):
-            ui.label("IMPORT ASSETS & SKINS").classes(
+            ui.label("IMPORT ASSETS").classes(
                 "text-sm font-bold text-indigo-400 mb-2"
             )
 
-            # --- Skin Selector Dropdown ---
-            ui.label("Active UI Skin").classes("text-xs text-slate-400 mt-2")
-            available_skins = [
-                d
-                for d in os.listdir(DIRS["skins"])
-                if os.path.isdir(os.path.join(DIRS["skins"], d))
-            ]
-
-            skin_dropdown = (
-                ui.select(
-                    options=available_skins,
-                    value=session_state.get("active_skin", "default"),
-                )
-                .classes("w-full")
-                .props("outlined dark dense")
-            )
-
-            def swap_skin(e):
-                session_state["active_skin"] = e.value
-                try:
-                    app.storage.user["active_skin"] = e.value
-                except Exception:
-                    pass
-                ui.notify(f"Swapped active skin to: {e.value}", type="positive")
-                ui.run_javascript("location.reload()")
-
-            skin_dropdown.on("update:model-value", swap_skin)
-
-            # --- Character Card Upload ---
             ui.label("Character Card (.png / .json)").classes(
-                "text-xs text-slate-400 mt-4"
+                "text-xs text-slate-400 mt-2"
             )
 
             async def handle_card_upload(e):
                 try:
-                    filename = getattr(e, "name", None) or getattr(
-                        getattr(e, "file", None), "name", "card.json"
-                    )
+                    filename = getattr(e, "name", None) or getattr(getattr(e, "file", None), "name", "card.json")
                     if hasattr(e, "content"):
                         content = e.content.read()
                     elif hasattr(e, "file"):
                         if hasattr(e.file, "content"):
                             content = e.file.content.read()
                         elif hasattr(e.file, "read"):
-                            content = (
-                                await e.file.read()
-                                if asyncio.iscoroutinefunction(e.file.read)
-                                else e.file.read()
-                            )
+                            content = await e.file.read() if asyncio.iscoroutinefunction(e.file.read) else e.file.read()
                         else:
                             content = getattr(e.file, "_data", b"")
                     else:
                         content = b""
 
-                    card_save_path = os.path.join(DIRS["cards"], filename)
-                    with open(card_save_path, "wb") as f:
-                        f.write(content)
-
                     data = parse_character_card(content, filename)
                     card_data = data.get("data", data)
-
+                    
                     char_name = card_data.get("name", "Unknown Character")
                     session_state["character_name"] = char_name
-
+                    
                     desc = card_data.get("description", "")
                     personality = card_data.get("personality", "")
                     scenario = card_data.get("scenario", "")
-                    session_state["system_prompt"] = (
-                        f"{desc}\n\n{personality}\n\n{scenario}".strip()
-                    )
+                    session_state["system_prompt"] = f"{desc}\n\n{personality}\n\n{scenario}".strip()
 
-                    first_mes = card_data.get(
-                        "first_mes", f"Hello! I am {char_name}."
-                    )
+                    first_mes = card_data.get("first_mes", f"Hello! I am {char_name}.")
                     session_state["messages"] = [
                         {
                             "sender": char_name,
@@ -550,10 +338,7 @@ def chat_client():
                         }
                     ]
 
-                    ui.notify(
-                        f"Loaded character: {session_state['character_name']}",
-                        type="positive",
-                    )
+                    ui.notify(f"Loaded character: {session_state['character_name']}", type="positive")
                     dialog.close()
                     render_chat_messages.refresh()
                 except Exception as err:
@@ -563,41 +348,28 @@ def chat_client():
                 "w-full"
             ).props('accept=".png, .json"')
 
-            # --- Lorebook Upload ---
             ui.label("Lorebook / World Info (.json)").classes(
                 "text-xs text-slate-400 mt-4"
             )
 
             async def handle_lorebook_upload(e):
                 try:
-                    filename = getattr(e, "name", "lorebook.json")
                     if hasattr(e, "content"):
                         content = e.content.read()
                     elif hasattr(e, "file"):
                         if hasattr(e.file, "content"):
                             content = e.file.content.read()
                         elif hasattr(e.file, "read"):
-                            content = (
-                                await e.file.read()
-                                if asyncio.iscoroutinefunction(e.file.read)
-                                else e.file.read()
-                            )
+                            content = await e.file.read() if asyncio.iscoroutinefunction(e.file.read) else e.file.read()
                         else:
                             content = getattr(e.file, "_data", b"")
                     else:
                         content = b""
 
-                    lore_save_path = os.path.join(DIRS["lorebooks"], filename)
-                    with open(lore_save_path, "wb") as f:
-                        f.write(content)
-
                     lore_data = parse_lorebook(content)
                     session_state["active_lorebook"] = lore_data["entries"]
 
-                    ui.notify(
-                        f"Loaded {len(lore_data['entries'])} lorebook entries!",
-                        type="positive",
-                    )
+                    ui.notify(f"Loaded {len(lore_data['entries'])} lorebook entries!", type="positive")
                     dialog.close()
                     render_inspector.refresh()
                 except Exception as err:
@@ -606,33 +378,8 @@ def chat_client():
             ui.upload(
                 on_upload=handle_lorebook_upload, auto_upload=True
             ).classes("w-full").props('accept=".json"')
-
-            # --- Skin ZIP Upload ---
-            ui.label("UI Skin Package (.mimirskin / .zip)").classes(
-                "text-xs text-slate-400 mt-4"
-            )
-
-            async def handle_skin_upload(e):
-                try:
-                    filename = getattr(e, "name", "theme.zip")
-                    content = (
-                        e.content.read()
-                        if hasattr(e, "content")
-                        else await e.file.read()
-                    )
-
-                    skin_name = extract_skin_zip(content, filename)
-                    ui.notify(f"Extracted skin package: {skin_name}", type="positive")
-                    dialog.close()
-                except Exception as err:
-                    ui.notify(f"Skin upload error: {str(err)}", type="negative")
-
-            ui.upload(on_upload=handle_skin_upload, auto_upload=True).classes(
-                "w-full"
-            ).props('accept=".zip, .mimirskin"')
-
             ui.button("Close", on_click=dialog.close).classes(
-                "mt-4 w-full bg-slate-800 text-xs"
+                "mt-4 w-full bg-slate-800"
             )
 
         dialog.open()
@@ -746,10 +493,7 @@ def chat_client():
         ui.label("🛡️ MIMIR CHAT CLIENT").classes(
             "text-xl font-bold tracking-wider text-indigo-400"
         )
-        with ui.row().classes("gap-2 items-center"):
-            ui.button("📱 Mobile View", on_click=toggle_mobile_view).classes(
-                "bg-slate-800 hover:bg-slate-700 text-xs"
-            )
+        with ui.row().classes("gap-2"):
             ui.button("LLM Settings ⚙️", on_click=open_llm_settings).classes(
                 "bg-slate-800 hover:bg-slate-700 text-xs"
             )
@@ -789,12 +533,11 @@ def chat_client():
             ).classes("text-indigo-400")
 
     # --- MAIN WORKSPACE ---
-    workspace_container = ui.row().classes(
-        "chat-workspace w-full h-[calc(100vh-110px)] no-wrap gap-0 bg-slate-950 text-slate-100"
-    )
-    with workspace_container:
+    with ui.row().classes(
+        "w-full h-[calc(100vh-110px)] no-wrap gap-0 bg-slate-950 text-slate-100"
+    ):
         # Left Column: Chat Feed
-        with ui.column().classes("chat-feed-column w-2/3 h-full p-6 justify-between flex-grow"):
+        with ui.column().classes("w-2/3 h-full p-6 justify-between flex-grow"):
             with ui.column().classes("w-full flex-grow overflow-y-auto gap-4 pr-2"):
 
                 @ui.refreshable
@@ -825,20 +568,20 @@ def chat_client():
                 ).classes("bg-indigo-600 h-12 w-12")
 
         # Right Column: Accordion Control Drawer
-        with ui.column().classes("control-panel-column w-1/3 h-full bg-slate-900 border-l border-slate-800 p-4 gap-3 overflow-y-auto"):
+        with ui.column().classes("w-1/3 h-full bg-slate-900 border-l border-slate-800 p-4 gap-3 overflow-y-auto"):
             ui.label("CONTROL PANEL & MEMORIES").classes("text-xs font-bold tracking-wider text-indigo-400 px-2 py-1")
 
             with ui.expansion("🎭 Character & Persona", icon="person").classes("w-full bg-slate-950 border border-slate-800 rounded text-slate-200"):
                 with ui.column().classes("p-3 gap-3 w-full"):
                     ui.label("Active Character").classes("text-xs text-slate-400 font-bold")
                     ui.input("Character Name", value=session_state["character_name"]).classes("w-full").props("outlined dark dense")
-
+                    
                     ui.label("Active User Persona").classes("text-xs text-slate-400 font-bold mt-2")
                     persona_select = ui.select(
                         options=["Default User", "Engineer Persona", "Investigator Persona"],
                         value="Default User"
                     ).classes("w-full").props("outlined dark dense")
-
+                    
                     ui.button("Load Character Card (.png/.json)", on_click=open_import_dialog).classes("w-full bg-indigo-600 text-xs mt-2")
 
             with ui.expansion("📖 Lorebook & World Info", icon="auto_stories").classes("w-full bg-slate-950 border border-slate-800 rounded text-slate-200"):
@@ -846,16 +589,16 @@ def chat_client():
                     with ui.row().classes("justify-between w-full items-center"):
                         ui.label("Active Entries:").classes("text-xs text-slate-400")
                         ui.badge(f"{len(session_state['active_lorebook'])} Loaded", color="indigo").classes("text-xs")
-
+                    
                     ui.button("Import / Swap Lorebook JSON", on_click=open_import_dialog).classes("w-full bg-slate-800 hover:bg-slate-700 text-xs mt-2")
-
+                    
                     if session_state["active_lorebook"]:
                         ui.button("Detach Lorebook", on_click=lambda: (session_state.update({"active_lorebook": []}), render_inspector.refresh())).classes("w-full bg-rose-950 border border-rose-800 text-rose-300 text-xs")
 
             with ui.expansion("⚡ Memory Hover-Thrusters (pgvector)", icon="analytics", value=True).classes("w-full bg-slate-950 border border-slate-800 rounded text-slate-200"):
                 with ui.column().classes("p-3 gap-2 w-full"):
                     ui.label("Recalled Chunks for Last Turn").classes("text-xs text-slate-400")
-
+                    
                     @ui.refreshable
                     def render_inspector():
                         if not session_state["last_memory_recall"]:
