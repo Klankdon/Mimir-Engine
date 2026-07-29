@@ -56,6 +56,15 @@ PostgreSQL Engine: 127.0.0.1:59057
 🤝 Community & Contributing
 Mimir Engine is 100% open-source and built for the community. We welcome PRs, feature ideas, and feedback! Check out our open issues tagged good first issue to dive in.
 
-License: MIT
+## 📄 License & Commercial Licensing
+
+Mimir Engine is released under the **GNU Affero General Public License v3.0 (AGPLv3)**.
+
+* **For Developers & Community:** Free to use, modify, extend, and deploy. Individual developers and open-source contributors are welcome to customize the system, tweak configurations, and build extensions.
+* **For Commercial & Proprietary Use:** If you wish to incorporate Mimir Engine into closed-source commercial products, proprietary SaaS platforms, or enterprise environments without AGPLv3 copyleft obligations, a separate **Commercial License** is required.
+
+📧 **Commercial Inquiries:** Contact `jmcgehee@zohomail.com` to discuss commercial licensing options.
 
 Roadmap: Native Jetpack Compose Android Client, Automated Deduplication Sweeps, and Custom Embedding Model Switcher.
+
+https://patreon.com/MIMIR_Engine?utm_medium=unknown&utm_source=join_link&utm_campaign=creatorshare_creator&utm_content=copyLink
