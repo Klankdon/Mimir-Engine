@@ -33,36 +33,95 @@ Isolated Environment: Runs internally with custom non-standard port defaults (59
 
 Client Agnostic: Standard REST API hooks cleanly into SillyTavern, custom web UI wrappers, or native mobile clients.
 
-🚀 Quick Start
-Ensure Docker Desktop is installed and running, then execute the launcher script for your platform:
 
-Windows: Double-click Launch-Mimir.bat
+🧜‍♂️ MIMIR // ENGINE
 
-Linux: Run ./Launch-Mimir.sh
+An open-source, containerized AI narrative workspace and proxy engine built for dynamic context tracking, pgvector memory retrieval, multi-character story sessions, and custom glassmorphic HUD reskinning.
+🛠️ Architecture Overview
 
-Mac: Double-click Launch-Mimir.command
+    Frontend: Svelte + TypeScript + Tailwind CSS (Vite dev server)
 
+    Backend API: FastAPI (OpenAI-compatible endpoints & asset ingestion)
+
+    Database & Vectors: PostgreSQL with pgvector extension (384-dim embedding storage)
+
+    Host Storage: Local raw text chunk backup (./storage/docids/)
+
+🚀 Quick Start & Installation
+Prerequisites
+
+Make sure you have the following installed on your host system:
+
+    Docker and Docker Compose
+
+    Node.js (v18+ recommended) and npm
+
+    Git
+
+Step 1: Clone the Repository
 Bash
-# Or launch directly via Docker Compose:
+
+git clone https://github.com/YourUsername/Mimir-Engine.git
+cd Mimir-Engine
+
+Step 2: Environment Configuration
+
+Create a .env file in the project root if it doesn't already exist:
+Code snippet
+
+DB_HOST=mimir-db
+DB_PORT=5432
+DB_NAME=mimir_db
+DB_USER=mimir_user
+DB_PASSWORD=mimir_secret_password
+
+Step 3: Spin Up Docker Services (Postgres + Backend)
+
+Bring up the PostgreSQL container (with pgvector) and FastAPI services:
+Bash
+
 docker compose up -d
-Access the services at your local endpoints:
 
-UI Interface: http://localhost:59055
+Verify that the containers are healthy:
+Bash
 
-Mimir API Bridge: http://localhost:59056
+docker ps
 
-PostgreSQL Engine: 127.0.0.1:59057
+Step 4: Run the Svelte Desktop UI
 
-🤝 Community & Contributing
-Mimir Engine is 100% open-source and built for the community. We welcome PRs, feature ideas, and feedback! Check out our open issues tagged good first issue to dive in.
+Navigate to the frontend workspace and install dependencies:
+Bash
 
-## 📄 License & Commercial Licensing
+cd mimir-desktop
+npm install
 
-Mimir Engine is released under the **GNU Affero General Public License v3.0 (AGPLv3)**.
+Start the Vite development server:
+Bash
 
-* **For Developers & Community:** Free to use, modify, extend, and deploy. Individual developers and open-source contributors are welcome to customize the system, tweak configurations, and build extensions.
-* **For Commercial & Proprietary Use:** If you wish to incorporate Mimir Engine into closed-source commercial products, proprietary SaaS platforms, or enterprise environments without AGPLv3 copyleft obligations, a separate **Commercial License** is required.
+npm run dev
 
+Open your browser and navigate to:
+Plaintext
+
+http://localhost:5173
+
+🎴 Key Features
+
+    Glassmorphic Theme Engine: Dynamic JSON/image skin loading with instant CSS variable updates.
+
+    Multi-Character Story Timelines: Switch active speakers, retain shared room memories via session_id, and manage room rosters.
+
+    pgVector Memory Storage: Automatic similarity search (<=> cosine distance) backed by Docker Postgres.
+
+    Chub/ST JSON Card Ingestion: Client-side in-memory JSON parsing for character cards, lorebooks, and embedded skins.
+
+🧹 Git Hygiene Tip
+
+Ensure your node_modules/ and build artifacts stay untracked:
+Bash
+
+echo "node_modules/" >> .gitignore
+echo ".vite/" >> .gitignore
 📧 **Commercial Inquiries:** Contact `jmcgehee@zohomail.com` to discuss commercial licensing options.
 
 Roadmap: Native Jetpack Compose Android Client, Automated Deduplication Sweeps, and Custom Embedding Model Switcher.
