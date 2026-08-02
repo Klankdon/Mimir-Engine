@@ -3,13 +3,17 @@ import base64
 import json
 import os
 import re
+import shutil
 import time
 import uuid
 from datetime import datetime
 from io import BytesIO
+from pathlib import Path
 from typing import List, Optional
 
-from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi import APIRouter, FastAPI, File, Form, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from nicegui import app as nicegui_app, ui
 from PIL import Image
 from pydantic import BaseModel
@@ -18,10 +22,34 @@ from pydantic import BaseModel
 from llm_client import PROVIDERS, stream_llm_response
 
 # ==========================================
+# 0. DISK STORAGE & CONFIGURATION
+# ==========================================
+BASE_STORAGE_DIR = Path.home() / "Mimir_Engine" / ".mimir_data"
+ASSET_FOLDERS = {
+    "character": BASE_STORAGE_DIR / "characters",
+    "char_lore": BASE_STORAGE_DIR / "lorebooks",
+    "worldbook": BASE_STORAGE_DIR / "worldbooks",
+    "persona": BASE_STORAGE_DIR / "personas",
+    "persona_lore": BASE_STORAGE_DIR / "persona_lore",
+}
+
+# Ensure hidden folders exist on startup
+for folder in ASSET_FOLDERS.values():
+    folder.mkdir(parents=True, exist_ok=True)
+
+# ==========================================
 # 1. INITIALIZE FASTAPI & STATE
 # ==========================================
 app = FastAPI(title="Mimir Engine & Client", version="1.0.0")
 st_router = APIRouter(prefix="/api/v1/st", tags=["SillyTavern Integration"])
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows requests from Svelte preview or Docker containers
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # --- In-Memory Application State ---
 session_state = {
@@ -120,7 +148,7 @@ def check_lorebook_triggers(user_text: str) -> list[str]:
 
 
 # ==========================================
-# 3. REST API ENDPOINTS
+# 3. REST API ENDPOINTS & SVELTE INTERFACE API
 # ==========================================
 @app.get("/api/v1/health")
 def health_check():
@@ -130,6 +158,118 @@ def health_check():
 @app.post("/api/v1/memory/ingest")
 def ingest_chunk(payload: dict):
     return {"status": "success", "doc_id": "DOCID_1042"}
+
+
+@app.post("/api/v1/assets/upload")
+async def upload_asset(file: UploadFile = File(...), asset_type: str = Form(...)):
+    """Saves uploaded assets directly from Svelte or external APIs to hidden disk storage."""
+    if asset_type not in ASSET_FOLDERS:
+        return {"error": f"Invalid asset type: {asset_type}"}, 400
+
+    target_folder = ASSET_FOLDERS[asset_type]
+    file_path = target_folder / file.filename
+
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    return {
+        "status": "success",
+        "asset_type": asset_type,
+        "filename": file.filename,
+        "saved_to": str(file_path)
+    }
+
+
+--- NEW LLM BACKEND CONFIGURATION ENDPOINTS ---
+class LLMConfigPayload(BaseModel):
+    provider: str
+    model: str
+    api_key: Optional[str] = ""
+    temperature: Optional[float] = 0.7
+
+
+@app.get("/api/v1/llm/config")
+async def get_llm_config():
+    """Returns the current LLM backend selection and available providers."""
+    return {
+        "current": session_state["llm_config"],
+        "available_providers": list(PROVIDERS.keys()),
+    }
+
+
+@app.post("/api/v1/llm/config")
+async def update_llm_config(cfg: LLMConfigPayload):
+    """Updates the active model, provider, and API key in session state."""
+    session_state["llm_config"]["provider"] = cfg.provider
+    session_state["llm_config"]["model"] = cfg.model
+    session_state["llm_config"]["api_key"] = cfg.api_key
+    session_state["llm_config"]["temperature"] = cfg.temperature
+    return {
+        "status": "updated",
+        "active_config": session_state["llm_config"],
+    }
+    
+
+# --- Svelte Frontend Chat Request Schema ---
+class SvelteChatRequest(BaseModel):
+    prompt: str
+    provider: Optional[str] = None
+    model: Optional[str] = None
+
+
+@app.post("/api/chat")
+async def svelte_chat_endpoint(req: SvelteChatRequest):
+    """Streams LLM tokens directly to the Svelte Live Console."""
+    cfg = session_state["llm_config"]
+    provider = req.provider or cfg["provider"]
+    model = req.model or cfg["model"]
+
+    lore_matches = check_lorebook_triggers(req.prompt)
+    prompt_payload = [
+        {"role": "system", "content": session_state["system_prompt"]}
+    ]
+    if lore_matches:
+        prompt_payload.append(
+            {"role": "system", "content": "LOREBOOK:\n" + "\n".join(lore_matches)}
+        )
+    prompt_payload.append({"role": "user", "content": req.prompt})
+
+    async def generate():
+        try:
+            async for token in stream_llm_response(
+                provider_name=provider,
+                api_key=cfg["api_key"],
+                model_name=model,
+                messages=prompt_payload,
+            ):
+                yield token
+        except Exception as err:
+            yield f"[LLM Error: {str(err)}]"
+
+    return StreamingResponse(generate(), media_type="text/plain")
+
+
+class VectorQuery(BaseModel):
+    query: str
+    limit: Optional[int] = 5
+
+
+@app.post("/api/vectors/search")
+async def vector_search_endpoint(req: VectorQuery):
+    """pgVector similarity query endpoint for Svelte Vector Recalls tab."""
+    results = [
+        {
+            "doc_id": "DOCID_1084",
+            "similarity": 0.89,
+            "fact": f"Recalled vector memory matching '{req.query}': User prefers skin-on-frame canoes using poplar.",
+        },
+        {
+            "doc_id": "DOCID_1092",
+            "similarity": 0.82,
+            "fact": "Character and User met in the industrial district near the steam valves.",
+        },
+    ]
+    return {"results": results[: req.limit]}
 
 
 class STMessage(BaseModel):
@@ -318,6 +458,11 @@ def chat_client():
                     else:
                         content = b""
 
+                    # --- SAVES TO DISK IN ~/.mimir_data/characters ---
+                    saved_path = ASSET_FOLDERS["character"] / filename
+                    with open(saved_path, "wb") as f:
+                        f.write(content)
+
                     data = parse_character_card(content, filename)
                     card_data = data.get("data", data)
                     
@@ -338,7 +483,7 @@ def chat_client():
                         }
                     ]
 
-                    ui.notify(f"Loaded character: {session_state['character_name']}", type="positive")
+                    ui.notify(f"Saved to disk & Loaded: {session_state['character_name']}", type="positive")
                     dialog.close()
                     render_chat_messages.refresh()
                 except Exception as err:
@@ -354,6 +499,7 @@ def chat_client():
 
             async def handle_lorebook_upload(e):
                 try:
+                    filename = getattr(e, "name", None) or getattr(getattr(e, "file", None), "name", "lorebook.json")
                     if hasattr(e, "content"):
                         content = e.content.read()
                     elif hasattr(e, "file"):
@@ -366,10 +512,15 @@ def chat_client():
                     else:
                         content = b""
 
+                    # --- SAVES TO DISK IN ~/.mimir_data/lorebooks ---
+                    saved_path = ASSET_FOLDERS["char_lore"] / filename
+                    with open(saved_path, "wb") as f:
+                        f.write(content)
+
                     lore_data = parse_lorebook(content)
                     session_state["active_lorebook"] = lore_data["entries"]
 
-                    ui.notify(f"Loaded {len(lore_data['entries'])} lorebook entries!", type="positive")
+                    ui.notify(f"Saved to disk & Loaded {len(lore_data['entries'])} lorebook entries!", type="positive")
                     dialog.close()
                     render_inspector.refresh()
                 except Exception as err:

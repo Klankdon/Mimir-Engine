@@ -60,3 +60,5 @@ Thumbs.db
 # ==========================================
 *.log
 docker-compose.override.yml
+.mimir_data/
+mimir-desktop/.vite/

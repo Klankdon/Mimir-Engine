@@ -1,0 +1,10 @@
+How to Point SillyTavern / Agnai to Aether
+In SillyTavern or Agnai:
+
+Navigate to Extensions / Server Extensions.
+
+Set the custom endpoint URL to: http://localhost:8000/api/v1/st/process-chat
+
+Whenever a turn is sent, the Aether Connector automatically enriches the payload 
+with pgVector context before passing it along to the LLM!
+
