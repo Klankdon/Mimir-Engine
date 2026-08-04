@@ -61,7 +61,7 @@ Make sure you have the following installed on your host system:
 Step 1: Clone the Repository
 Bash
 
-git clone https://github.com/YourUsername/Mimir-Engine.git
+git clone https://github.com/Klankdon/Mimir-Engine.git
 cd Mimir-Engine
 
 Step 2: Environment Configuration
