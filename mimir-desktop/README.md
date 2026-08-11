@@ -1,47 +1,88 @@
-# Svelte + TS + Vite
+🧜‍♂️ MIMIR // ENGINE
+An open-source, containerized AI narrative workspace, middleware proxy, and context engine built around PostgreSQL + pgvector (384-dim embeddings via cosine distance). Designed for deep memory retention, multi-character story sessions, and seamless integration with external frontends like SillyTavern or Agnaistic.
 
-This template should help get you started developing with Svelte and TypeScript in Vite.
+🛠️ Architecture Overview
+Frontend: Svelte 5 + TypeScript + Tailwind CSS (Vite Dev Server) with dedicated views:
 
-## Recommended IDE Setup
+ChatPage: Lightweight live console to monitor or smoke-test chat turns.
 
-[VS Code](https://code.visualstudio.com/) + [Svelte](https://marketplace.visualstudio.com/items?itemName=svelte.svelte-vscode).
+GeeksDashboard: Real-time telemetry, RAM/token meters, pgVector inspector, and a locked SubSurface SQL console.
 
-## Need an official Svelte framework?
+IntegrationsHub: One-click endpoint switching (Cloudflare Tunnel, Tailscale, ngrok, Local Direct Binding).
 
-Check out [SvelteKit](https://github.com/sveltejs/kit#readme), which is also powered by Vite. Deploy anywhere with its serverless-first approach and adapt to various platforms, with out of the box support for TypeScript, SCSS, and Less, and easily-added support for mdsvex, GraphQL, PostCSS, Tailwind CSS, and more.
+Backend API: FastAPI + Uvicorn (app.py / OpenAI-compatible /v1/chat/completions endpoints & asset ingestion).
 
-## Technical considerations
+Database & Vectors: PostgreSQL with pgvector extension (384-dim embedding storage).
 
-**Why use this over SvelteKit?**
+Host Storage: Local raw text chunk backup (./storage/docids/).
 
-- It brings its own routing solution which might not be preferable for some users.
-- It is first and foremost a framework that just happens to use Vite under the hood, not a Vite app.
+🚀 Quick Start & Installation
+Prerequisites
+Make sure you have the following installed on your host system:
 
-This template contains as little as possible to get started with Vite + TypeScript + Svelte, while taking into account the developer experience with regards to HMR and intellisense. It demonstrates capabilities on par with the other `create-vite` templates and is a good starting point for beginners dipping their toes into a Vite + Svelte project.
+Docker & Docker Compose
 
-Should you later need the extended capabilities and extensibility provided by SvelteKit, the template has been structured similarly to SvelteKit so that it is easy to migrate.
+Node.js (v18+) & npm
 
-**Why `global.d.ts` instead of `compilerOptions.types` inside `jsconfig.json` or `tsconfig.json`?**
+Python 3.10+ (if running backend outside Docker)
 
-Setting `compilerOptions.types` shuts out all other types not explicitly listed in the configuration. Using triple-slash references keeps the default TypeScript setting of accepting type information from the entire workspace, while also adding `svelte` and `vite/client` type information.
+Step 1: Clone the Repository & Configure Environment
+Bash
+git clone https://github.com/Klankdon/Mimir-Engine.git
+cd Mimir-Engine
+Create a .env file in the project root:
 
-**Why include `.vscode/extensions.json`?**
+Code snippet
+DB_HOST=mimir-db
+DB_PORT=5432
+DB_NAME=mimir_db
+DB_USER=mimir_user
+DB_PASSWORD=mimir_secret_password
+Step 2: Boot Database & Backend Stack
+Option A: Fully Containerized (Recommended)
+Spin up PostgreSQL (pgvector) and the FastAPI backend together:
 
-Other templates indirectly recommend extensions via the README, but this file allows VS Code to prompt the user to install the recommended extension upon opening the project.
+Bash
+docker compose up -d
+Verify that the containers are healthy:
 
-**Why enable `allowJs` in the TS template?**
+Bash
+docker ps
+Option B: Local Uvicorn Development
+If running the Python service directly on host while Postgres runs in Docker:
 
-While `allowJs: false` would indeed prevent the use of `.js` files in the project, it does not prevent the use of JavaScript syntax in `.svelte` files. In addition, it would force `checkJs: false`, bringing the worst of both worlds: not being able to guarantee the entire codebase is TypeScript, and also having worse typechecking for the existing JavaScript. In addition, there are valid use cases in which a mixed codebase may be relevant.
+Bash
+# 1. Start Docker Postgres container
+docker compose up -d mimir-db
 
-**Why is HMR not preserving my local component state?**
+# 2. Install Python dependencies
+pip install -r requirements.txt
 
-HMR state preservation comes with a number of gotchas! It has been disabled by default in both `svelte-hmr` and `@sveltejs/vite-plugin-svelte` due to its often surprising behavior. You can read the details [here](https://github.com/rixo/svelte-hmr#svelte-hmr).
+# 3. Boot Uvicorn ASGI server
+uvicorn app:app --host 0.0.0.0 --port 8000 --reload
+Step 3: Boot Desktop Interface
+Navigate to mimir-desktop, install dependencies, and start the Svelte 5 development server:
 
-If you have state that's important to retain within a component, consider creating an external store which would not be replaced by HMR.
+Bash
+cd mimir-desktop
+npm install
+npm run dev
+Open your browser and navigate to:
 
-```ts
-// store.ts
-// An extremely simple external store
-import { writable } from 'svelte/store'
-export default writable(0)
-```
+Plaintext
+http://localhost:5173
+🎴 Key Features & Interfaces
+Proxy & Middleware Integrations (IntegrationsHub): Expose OpenAI-compatible completion endpoints (http://localhost:8000/v1) to SillyTavern or external clients via Cloudflare Tunnels, Tailscale, ngrok, or local binding.
+
+Geeks Dashboard & SubSurface Console (GeeksDashboard): Guarded by an explicit warning confirmation before unlocking raw SQL query execution, vector index monitoring, and database table metrics.
+
+Live Chat Stream (ChatPage): Test prompt ingestion and verify vector memory recalls directly from the UI.
+
+pgVector Memory Storage: Dual-write pipeline storing raw .txt chunks on host storage while indexing 384-dim vector embeddings in Docker Postgres using cosine distance (<=>).
+
+🧹 Maintenance & Git Hygiene
+Keep build caches and node modules untracked:
+
+Bash
+echo "node_modules/" >> .gitignore
+echo ".vite/" >> .gitignore
