@@ -1,129 +1,30 @@
-🛡️ Mimir Engine
-A containerized, high-speed hybrid memory system for local LLMs and AI frontends.
+Here is a clean, modern update for your README.md. It reflects your pivot to a transparent middleware proxy, highlights the one-click script setup (start.bat / start.sh), incorporates your Svelte 5 Geeks Dashboard, and links directly to GitHub Discussions and Patreon.🛡️ Mimir EngineAn open-source, zero-client middleware proxy and long-term vector memory engine for local LLMs and chat UIs.Mimir Engine sits transparently between your chat client (Agnaistic, SillyTavern, Open WebUI) and your backend inference server (KoboldCPP, vLLM, Ollama). By leveraging PostgreSQL + pgvector, Mimir intercepts prompt streams in real-time, injects relevant long-term context via cosine similarity search, and captures new memories without clogging your prompt stack or requiring custom mobile apps.
 
-Mimir Engine bridges the gap between fast conversational UI and deep, persistent memory. By combining PostgreSQL + pgvector with a decoupled file-based logging pipeline, Mimir provides deterministic context recall without crippling your LLM’s generation speeds or polluting your prompt context.
-
-Built from the ground up for power users, developers, and the self-hosted community.
-
-💡 Why Mimir?
-Standard vector databases drop raw message walls into context, leading to memory duplication, token bloat, and hallucinations. Mimir fixes this with a dual-tier indexing hierarchy:
-
-Deterministic Traceability (DOCID & PARENT-ID): Every 300-token chunk is saved directly to local storage under a strict parent hierarchy (Character/World) and assigned a unique DOCID.
-
-Hybrid Semantic Storage: Raw logs stay on disk, while an asynchronous middleware extracts atomic facts, keywords, and pgvector embeddings into PostgreSQL.
-
-Low-Latency Retrieval: During chat, Mimir performs lightning-fast vector/keyword queries, injecting only the top relevant summaries into the prompt stack. The full raw transcript on disk is only accessed if deep recall is requested.
-
-🏗️ Architecture Stack
-   [ SillyTavern / Mobile UI ]
-               │
-               ▼  (HTTP REST / Webhook)
- ┌───────────────────────────────────┐
- │   Mimir Middleware (Websniffer)   │  <-- Asynchronous Processing
- └─────────┬───────────────┬─────────┘
-           │               │
-           ▼               ▼
-┌───────────────────┐  ┌───────────────────────────────────┐
-│ Storage Container │  │        Postgres Container         │
-│ (Raw DOCID .txt)  │  │ (pgvector + Metadata & Keywords) │
-└───────────────────┘  └───────────────────────────────────┘
-Fully Containerized: Self-contained via docker-compose. Zero system bloat.
-
-Isolated Environment: Runs internally with custom non-standard port defaults (59055+) to avoid local port conflicts with dev stacks or home lab hardware.
-
-Client Agnostic: Standard REST API hooks cleanly into SillyTavern, custom web UI wrappers, or native mobile clients.
-
-
-🧜‍♂️ MIMIR // ENGINE
-
-An open-source, containerized AI narrative workspace and proxy engine built for dynamic context tracking, pgvector memory retrieval, multi-character story sessions, and custom glassmorphic HUD reskinning.
-🛠️ Architecture Overview
-
-    Frontend: Svelte + TypeScript + Tailwind CSS (Vite dev server)
-
-    Backend API: FastAPI (OpenAI-compatible endpoints & asset ingestion)
-
-    Database & Vectors: PostgreSQL with pgvector extension (384-dim embedding storage)
-
-    Host Storage: Local raw text chunk backup (./storage/docids/)
-
-🚀 Quick Start & Installation
-Prerequisites
-
-Make sure you have the following installed on your host system:
-
-    Docker and Docker Compose
-
-    Node.js (v18+ recommended) and npm
-
-    Git
-
-Step 1: Clone the Repository
-Bash
-
-git clone https://github.com/Klankdon/Mimir-Engine.git
+💡 Why Mimir Engine?Standard vector tools drop huge walls of raw chat history back into context, causing token bloat, high generation costs, and model hallucinations. Mimir solves this with a decoupled middleware proxy architecture:Zero-Mobile Overhead: Mobile users access Agnaistic or SillyTavern normally via web browser. Simply point the client's API/Proxy endpoint to your Mimir host instance—no local mobile apps, Termux, or nested virtual machines required.Deterministic Chunking & Traceability: Conversations are indexed into target token slices ($\sim300$ tokens) with structured parent tracking (Character, World, Session ID) and local disk backups.Non-Blocking Async Ingestion: Memory retrieval happens on prompt ingress. Assistant responses are flushed back via Server-Sent Events (SSE) immediately, while vector embeddings are generated and committed in background tasks.Built-in Svelte 5 "Geeks Dashboard": Monitor live vector storage, inspect cosine distance thresholds, inspect memory slices, and adjust proxy configurations in real-time.🏗️ Architecture Stack[ Agnaistic / SillyTavern / Web Client ]
+                   │
+                   ▼  (OpenAI / Kobold API Format)
+┌─────────────────────────────────────────────────────┐
+│          Mimir Engine Middleware Proxy              │
+│       FastAPI + Uvicorn + Svelte 5 Dashboard        │
+└──────────────┬──────────────────────┬───────────────┘
+               │                      │
+               ▼                      ▼
+┌─────────────────────────────┐  ┌─────────────────────────────────┐
+│     PostgreSQL + pgvector   │  │        Upstream LLM Host        │
+│  (Cosine Vector Store DB)   │  │  (KoboldCPP / Ollama / vLLM)   │
+└─────────────────────────────┘  └─────────────────────────────────┘
+Backend API: FastAPI (Async proxy routing, OpenAI-compatible hooks, embedding ingestion).Database & Vector Store: PostgreSQL with pgvector extension.Dashboard Frontend: Svelte 5 + TypeScript + Tailwind CSS (Pre-compiled into static distribution).🚀 Quick Start & One-Click SetupMimir Engine features automatic environment creation, dependency resolution, and frontend compilation via cross-platform boot scripts.Option A: Standard Boot Script (Windows / Linux / macOS)Clone the Repository:Bashgit clone https://github.com/Klankdon/Mimir-Engine.git
 cd Mimir-Engine
-
-Step 2: Environment Configuration
-
-Create a .env file in the project root if it doesn't already exist:
-Code snippet
-
-DB_HOST=mimir-db
-DB_PORT=5432
-DB_NAME=mimir_db
-DB_USER=mimir_user
-DB_PASSWORD=mimir_secret_password
-
-Step 3: Spin Up Docker Services (Postgres + Backend)
-
-Bring up the PostgreSQL container (with pgvector) and FastAPI services:
-Bash
-
+Run the One-Click Launcher:Windows: Double-click start.bat (or run in CMD):DOSstart.bat
+Linux / macOS: Make executable and run:Bashchmod +x start.sh
+./start.sh
+The boot script automatically runs git pull, creates a Python virtual environment, installs dependencies, builds static assets, launches the proxy, and opens the dashboard at http://localhost:8000.Option B: Docker Compose (Server & HomeLab Deployment)For containerized environments running Docker Desktop, Portainer, or headless Linux servers:Bash# 1. Bring up PostgreSQL (pgvector) and Mimir Engine services
 docker compose up -d
 
-Verify that the containers are healthy:
-Bash
+# 2. Access the live dashboard and proxy
+http://localhost:8000
+🔌 Connecting to Your Chat ClientPoint your web chat client (Agnaistic, SillyTavern, etc.) to Mimir Engine as an OpenAI-compatible proxy:API Base URL: http://localhost:8000/v1 (or your host server IP)API Key: (Any dummy string or your configured UPSTREAM_LLM_KEY)Upstream LLM Mapping: Configurable inside the Geeks Dashboard under Settings -> Upstream LLM URL.
 
-docker ps
+💬 Community & DiscussionsGitHub Discussions: Have a feature request, embedding benchmark, or configuration setup to share? Join the Mimir Engine GitHub Discussions.Patreon: Want to support dedicated cloud testbeds, multi-model embedding pipelines, and open-source development? Support Mimir Engine on Patreon.
 
-Step 4: Run the Svelte Desktop UI
-
-Navigate to the frontend workspace and install dependencies:
-Bash
-
-cd mimir-desktop
-npm install
-
-Start the Vite development server:
-Bash
-
-npm run dev
-
-Open your browser and navigate to:
-Plaintext
-
-http://localhost:5173
-
-🎴 Key Features
-
-    Glassmorphic Theme Engine: Dynamic JSON/image skin loading with instant CSS variable updates.
-
-    Multi-Character Story Timelines: Switch active speakers, retain shared room memories via session_id, and manage room rosters.
-
-    pgVector Memory Storage: Automatic similarity search (<=> cosine distance) backed by Docker Postgres.
-
-    Chub/ST JSON Card Ingestion: Client-side in-memory JSON parsing for character cards, lorebooks, and embedded skins.
-
-🧹 Git Hygiene Tip
-
-Ensure your node_modules/ and build artifacts stay untracked:
-Bash
-
-echo "node_modules/" >> .gitignore
-echo ".vite/" >> .gitignore
-📧 **Commercial Inquiries:** Contact `jmcgehee@zohomail.com` to discuss commercial licensing options.
-
-Roadmap: Native Jetpack Compose Android Client, Automated Deduplication Sweeps, and Custom Embedding Model Switcher.
-
-https://patreon.com/MIMIR_Engine?utm_medium=unknown&utm_source=join_link&utm_campaign=creatorshare_creator&utm_content=copyLink
+📧 Licensing & InquiriesCommercial Inquiries: Contact jmcgehee@zohomail.com to discuss commercial licensing, custom integration pipelines, or enterprise deployments.
