@@ -22,13 +22,20 @@ cd Mimir-Engine
 Run the One-Click Launcher:Windows: Double-click start.bat (or run in CMD):DOSstart.bat
 Linux / macOS: Make executable and run:Bashchmod +x start.sh
 ./start.sh
-The boot script automatically runs git pull, creates a Python virtual environment, installs dependencies, builds static assets, launches the proxy, and opens the dashboard at http://localhost:8000.Option B: Docker Compose (Server & HomeLab Deployment)For containerized environments running Docker Desktop, Portainer, or headless Linux servers:Bash# 1. Bring up PostgreSQL (pgvector) and Mimir Engine services
+The boot script automatically runs git pull, creates a Python virtual environment, installs dependencies, builds static assets, launches the proxy, and opens the dashboard at http://localhost:8000.
+Option B: Docker Compose (Server & HomeLab Deployment)For containerized environments running Docker Desktop, Portainer, or headless Linux servers:Bash# 
+1. Bring up PostgreSQL (pgvector) and Mimir Engine services
 docker compose up -d
 
 # 2. Access the live dashboard and proxy
 http://localhost:8000
-🔌 Connecting to Your Chat ClientPoint your web chat client (Agnaistic, SillyTavern, etc.) to Mimir Engine as an OpenAI-compatible proxy:API Base URL: http://localhost:8000/v1 (or your host server IP)API Key: (Any dummy string or your configured UPSTREAM_LLM_KEY)Upstream LLM Mapping: Configurable inside the Geeks Dashboard under Settings -> Upstream LLM URL.
+🔌 Connecting to Your Chat ClientPoint your web chat client (Agnaistic, SillyTavern, etc.) to Mimir Engine as an OpenAI-compatible proxy:
+API Base URL: http://localhost:8000/v1 (or your host server IP)
+API Key: (Any dummy string or your configured UPSTREAM_LLM_KEY)
+Upstream LLM Mapping: Configurable inside the Geeks Dashboard under Settings -> Upstream LLM URL.
 
-💬 Community & DiscussionsGitHub Discussions: Have a feature request, embedding benchmark, or configuration setup to share? Join the Mimir Engine GitHub Discussions.Patreon: Want to support dedicated cloud testbeds, multi-model embedding pipelines, and open-source development? Support Mimir Engine on Patreon.
+💬 Community & DiscussionsGitHub Discussions: Have a feature request, embedding benchmark, or configuration setup to share? [Join the Mimir Engine GitHub Discussions](https://www.google.com/search?q=https://github.com/Klankdon/Mimir-Engine/discussions).
+
+Patreon: Want to support dedicated cloud testbeds, multi-model embedding pipelines, and open-source development? [Support Mimir Engine on Patreon](https://patreon.com/MIMIR_Engine?utm_medium=unknown&utm_source=join_link&utm_campaign=creatorshare_creator&utm_content=copyLink).
 
 📧 Licensing & InquiriesCommercial Inquiries: Contact jmcgehee@zohomail.com to discuss commercial licensing, custom integration pipelines, or enterprise deployments.
