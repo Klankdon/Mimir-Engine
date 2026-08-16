@@ -1,41 +1,44 @@
-@echo off
-setlocal enabledelayedexpansion
-title Mimir Engine Launcher
+#!/usr/bin/env bash
 
-echo ===================================================
-echo               MIMIR ENGINE LAUNCHER               
-echo ===================================================
-echo.
+echo "==================================================="
+echo "              MIMIR ENGINE LAUNCHER               "
+echo "==================================================="
+echo ""
 
-:: 1. Auto-update repository
-echo [1/4] Checking for Mimir Engine updates...
-git pull origin main
+# 1. Auto-update repository
+echo "[1/4] Checking for Mimir Engine updates..."
+git pull origin main 2>/dev/null || true
 
-:: 2. Python Virtual Environment Setup
-echo [2/4] Verifying Python environment...
-if not exist "venv" (
-    echo Creating Python virtual environment...
-    python -m venv venv
-)
-call venv\Scripts\activate
-echo Installing/updating Python dependencies...
-pip install -r requirements.txt --quiet
+# 2. Python Virtual Environment Setup
+echo "[2/4] Verifying Python environment..."
+if [ ! -f "venv/bin/pip" ]; then
+    echo "Creating clean Python virtual environment..."
+    rm -rf venv
+    python3 -m venv venv || { echo "ERROR: python3-venv is missing. Run: sudo apt install python3-venv python3-full"; exit 1; }
+fi
 
-:: 3. Pre-compiled Frontend Check
-echo [3/4] Checking Svelte dashboard build...
-if not exist "mimir-desktop\dist" (
-    echo Building frontend static assets for first-time run...
-    cd mimir-desktop
-    if not exist "node_modules" (
-        call npm install
-    )
-    call npm run build
-    cd ..
-)
+echo "Installing/updating Python dependencies..."
+./venv/bin/pip install -r requirements.txt --quiet
 
-:: 4. Launch Backend & Open Browser
-echo [4/4] Launching Mimir Engine Middleware...
-start http://localhost:8000
-python app.py
+# 3. Pre-compiled Frontend Check
+echo "[3/4] Checking Svelte dashboard build..."
+if [ ! -d "mimir-desktop/dist" ]; then
+    if ! command -v npm &> /dev/null; then
+        echo "WARNING: 'npm' is not installed. Skipping frontend build."
+        echo "To build the UI, install Node.js: sudo apt install nodejs npm"
+    else
+        echo "Building frontend static assets for first-time run..."
+        cd mimir-desktop
+        if [ ! -d "node_modules" ]; then
+            npm install
+        fi
+        npm run build
+        cd ..
+    fi
+fi
 
+# 4. Launch Backend & Open Browser
+echo "[4/4] Launching Mimir Engine Middleware..."
+(sleep 2 && (open http://localhost:8000 2>/dev/null || xdg-open http://localhost:8000 2>/dev/null)) &
+./venv/bin/python app.py
 pause
