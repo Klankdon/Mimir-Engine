@@ -10,8 +10,54 @@
   function copyText(text: string) {
     navigator.clipboard.writeText(text);
   }
+
+  // --- Upstream Provider State (Svelte 5) ---
+  interface UpstreamProvider {
+    id: string;
+    name: string;
+    baseUrl: string;
+    apiKey: string;
+    enabled: boolean;
+  }
+
+  let upstreamProviders = $state<UpstreamProvider[]>([
+    {
+      id: '1',
+      name: 'Local Ollama / vLLM',
+      baseUrl: 'http://localhost:11434/v1',
+      apiKey: '',
+      enabled: true
+    }
+  ]);
+
+  // Form input state
+  let newName = $state('');
+  let newBaseUrl = $state('http://localhost:11434/v1');
+  let newApiKey = $state('');
+
+  function addUpstreamProvider() {
+    if (!newName.trim() || !newBaseUrl.trim()) return;
+    
+    upstreamProviders.push({
+      id: crypto.randomUUID(),
+      name: newName,
+      baseUrl: newBaseUrl,
+      apiKey: newApiKey,
+      enabled: true
+    });
+
+    // Reset inputs
+    newName = '';
+    newBaseUrl = 'http://localhost:11434/v1';
+    newApiKey = '';
+  }
+
+  function removeProvider(id: string) {
+    upstreamProviders = upstreamProviders.filter(p => p.id !== id);
+  }
 </script>
 
+<!-- Network Ingress & Proxy Provider Card -->
 <div class="card">
   <div class="card-header">
     <h3>🔒 Network Ingress & Proxy Provider</h3>
@@ -29,12 +75,11 @@
       <option value="cloudflare">Cloudflare Tunnel (Zero-Config HTTPS)</option>
       <option value="tailscale">Tailscale Mesh Network (Private Encrypted)</option>
       <option value="ngrok">ngrok Tunnel (Public Port Forwarding)</option>
-      <option value="aisniffer">AI-Sniffer Logger (External Proxy Service)</option>
       <option value="local">Local Direct Binding (localhost / LAN)</option>
     </select>
   </div>
 
-  <!-- Dynamic Instructions & Endpoint Box based on selection -->
+  <!-- Dynamic Instructions & Endpoint Box -->
   <div class="provider-details">
     {#if selectedProvider === 'cloudflare'}
       <div class="route-header">
@@ -69,17 +114,6 @@
       </div>
       <p class="provider-hint">Copy your active ngrok public tunnel URL into your frontend configuration.</p>
 
-    {:else if selectedProvider === 'aisniffer'}
-      <div class="route-header">
-        <span class="tag sniffer">AI-Sniffer</span>
-        <span>External AI-Sniffer Logger Proxy Endpoint</span>
-      </div>
-      <div class="url-box">
-        <code class="endpoint-code">{snifferPort}</code>
-        <button class="copy-btn" onclick={() => copyText(snifferPort)}>📋 Copy</button>
-      </div>
-      <p class="provider-hint">Routes traffic through your standalone AI-Sniffer instance before hitting Mimir.</p>
-
     {:else if selectedProvider === 'local'}
       <div class="route-header">
         <span class="tag local">Local</span>
@@ -91,6 +125,39 @@
       </div>
       <p class="provider-hint">Standard local connection for frontends running on the same machine.</p>
     {/if}
+  </div>
+</div>
+
+<!-- Upstream Model Providers Configuration Card -->
+<div class="card" style="margin-top: 1rem;">
+  <div class="card-header">
+    <h3>🤖 Upstream LLM Providers</h3>
+    <span class="badge active">{upstreamProviders.filter(p => p.enabled).length} ACTIVE</span>
+  </div>
+  <p class="sub-text">
+    Configure downstream LLM hosts (Ollama, LM Studio, vLLM, OpenRouter, OpenAI) that Mimir forwards requests to.
+  </p>
+
+  <!-- Add Provider Form -->
+  <div class="add-provider-form">
+    <input type="text" placeholder="Provider Label (e.g. Local Ollama)" bind:value={newName} class="input-field" />
+    <input type="text" placeholder="Base API URL (e.g. http://localhost:11434/v1)" bind:value={newBaseUrl} class="input-field" />
+    <input type="password" placeholder="API Key (Optional)" bind:value={newApiKey} class="input-field" />
+    <button class="action-btn" onclick={addUpstreamProvider}>➕ Add Upstream Target</button>
+  </div>
+
+  <!-- Configured Providers List -->
+  <div class="provider-list">
+    {#each upstreamProviders as provider (provider.id)}
+      <div class="provider-item">
+        <input type="checkbox" bind:checked={provider.enabled} />
+        <div class="provider-info">
+          <strong>{provider.name}</strong>
+          <code>{provider.baseUrl}</code>
+        </div>
+        <button class="delete-btn" onclick={() => removeProvider(provider.id)}>🗑️</button>
+      </div>
+    {/each}
   </div>
 </div>
 
@@ -153,4 +220,64 @@
   .copy-btn:hover { background: rgba(255, 255, 255, 0.2); }
 
   .provider-hint { font-size: 0.75rem; color: rgba(255, 255, 255, 0.4); margin: 4px 0 0 0; }
+
+  .add-provider-form {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 12px 0;
+  }
+
+  .input-field {
+    padding: 8px 12px;
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 6px;
+    color: #fff;
+    font-size: 0.85rem;
+  }
+
+  .action-btn {
+    padding: 8px;
+    background: rgba(56, 189, 248, 0.2);
+    border: 1px solid rgba(56, 189, 248, 0.4);
+    color: #38bdf8;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: bold;
+  }
+
+  .provider-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 12px;
+  }
+
+  .provider-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 12px;
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+  }
+
+  .provider-info {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+  }
+
+  .provider-info code {
+    font-size: 0.75rem;
+    color: rgba(255, 255, 255, 0.5);
+  }
+
+  .delete-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+  }
 </style>
