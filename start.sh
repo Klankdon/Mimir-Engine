@@ -1,3 +1,5 @@
+#!/usr/bin/env bash
+
 echo "==================================================="
 echo "              MIMIR ENGINE LAUNCHER               "
 echo "==================================================="
@@ -20,22 +22,29 @@ echo "Installing/updating Python dependencies..."
 
 # 3. Pre-compiled Frontend Check
 echo "[3/4] Checking Svelte dashboard build..."
-if [ ! -d "mimir-desktop/dist" ]; then
-    if ! command -v npm &> /dev/null; then
-        echo "WARNING: 'npm' is not installed. Skipping frontend build."
-        echo "To build the UI, install Node.js: sudo apt install nodejs npm"
-    else
-        echo "Building frontend static assets for first-time run..."
-        cd mimir-desktop
-        if [ ! -d "node_modules" ]; then
-            npm install
+if [ ! -d "dist" ]; then
+    if [ ! -d "mimir-desktop/dist" ]; then
+        if ! command -v npm &> /dev/null; then
+            echo "WARNING: 'npm' is not installed. Skipping frontend build."
+            echo "To build the UI, install Node.js: sudo apt install nodejs npm"
+        else
+            echo "Building frontend static assets for first-time run..."
+            cd mimir-desktop
+            if [ ! -d "node_modules" ]; then
+                npm install
+            fi
+            npm run build
+            cd ..
         fi
-        npm run build
-        cd ..
+    fi
+
+    if [ -d "mimir-desktop/dist" ]; then
+        echo "Copying built dashboard to root..."
+        cp -r mimir-desktop/dist ./dist
     fi
 fi
 
 # 4. Launch Backend & Open Browser
 echo "[4/4] Launching Mimir Engine Middleware..."
 (sleep 2 && (open http://localhost:8000 2>/dev/null || xdg-open http://localhost:8000 2>/dev/null)) &
-./venv/bin/python app.py
+./venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 8000 --reload
