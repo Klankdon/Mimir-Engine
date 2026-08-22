@@ -32,17 +32,23 @@ pip install -r requirements.txt --quiet
 :: 3. Pre-compiled Frontend Check
 echo.
 echo [3/4] Checking Svelte dashboard build...
-if not exist "mimir-desktop\dist" (
-    where npm >nul 2>nul
-    if errorlevel 1 (
-        echo WARNING: Node.js/npm is not installed.
-        echo Please install Node.js v22+ to compile the Svelte UI.
-    ) else (
-        echo Building frontend static assets...
-        cd mimir-desktop
-        if not exist "node_modules" call npm install
-        call npm run build
-        cd ..
+if not exist "dist" (
+    if not exist "mimir-desktop\dist" (
+        where npm >nul 2>nul
+        if errorlevel 1 (
+            echo WARNING: Node.js/npm is not installed.
+            echo Please install Node.js v22+ to compile the Svelte UI.
+        ) else (
+            echo Building frontend static assets...
+            cd mimir-desktop
+            if not exist "node_modules" call npm install
+            call npm run build
+            cd ..
+        )
+    )
+    if exist "mimir-desktop\dist" (
+        echo Copying built dashboard to root...
+        xcopy /s /e /y "mimir-desktop\dist" "dist\" >nul
     )
 )
 
