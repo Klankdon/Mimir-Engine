@@ -14,35 +14,58 @@ DB_PASSWORD = os.getenv("DB_PASSWORD", "mimir_secret_password")
 STORAGE_DIR = os.path.join(os.getcwd(), "storage", "docids")
 
 def init_db_and_storage():
-    """Ensures local storage directory exists and initializes Postgres table."""
-    # 1. Create text file directory
+    """Ensures local storage directory exists and initializes Postgres tables."""
     os.makedirs(STORAGE_DIR, exist_ok=True)
-    
-    # 2. Initialize Postgres Table & pgvector extension
+
     conn = psycopg2.connect(
         host=DB_HOST, port=DB_PORT, dbname=DB_NAME, user=DB_USER, password=DB_PASSWORD
     )
     cursor = conn.cursor()
-    
     cursor.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+    
+    # Existing memory table
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS memory_db (
-            doc_id          VARCHAR(64) PRIMARY KEY,
-            parent_id       VARCHAR(64) NOT NULL,
-            session_id      VARCHAR(64) NOT NULL,
-            persona         VARCHAR(128) DEFAULT 'User',
-            text_id         VARCHAR(64) NOT NULL,
-            date_id         DATE DEFAULT CURRENT_DATE,
-            time_id         TIME DEFAULT CURRENT_TIME,
-            created_at      TIMESTAMPTZ DEFAULT NOW(),
-            content         TEXT NOT NULL,
-            embedding       vector(384),
-            metadata        JSONB DEFAULT '{}'::jsonb
-        );
-        CREATE INDEX IF NOT EXISTS idx_memory_session ON memory_db(session_id);
-        CREATE INDEX IF NOT EXISTS idx_memory_parent ON memory_db(parent_id);
-        CREATE INDEX IF NOT EXISTS idx_memory_date ON memory_db(date_id);
+    CREATE TABLE IF NOT EXISTS memory_db (
+        doc_id          VARCHAR(64) PRIMARY KEY,
+        parent_id       VARCHAR(64) NOT NULL,
+        session_id      VARCHAR(64) NOT NULL,
+        persona         VARCHAR(128) DEFAULT 'User',
+        text_id         VARCHAR(64) NOT NULL,
+        date_id         DATE DEFAULT CURRENT_DATE,
+        time_id         TIME DEFAULT CURRENT_TIME,
+        created_at      TIMESTAMPTZ DEFAULT NOW(),
+        content         TEXT NOT NULL,
+        embedding       vector(384),
+        metadata        JSONB DEFAULT '{}'::jsonb
+    );
+    CREATE INDEX IF NOT EXISTS idx_memory_session ON memory_db(session_id);
+    CREATE INDEX IF NOT EXISTS idx_memory_parent ON memory_db(parent_id);
+    CREATE INDEX IF NOT EXISTS idx_memory_date ON memory_db(date_id);
     """)
+
+    # New Provider & Model tables
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS upstream_providers (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        name VARCHAR(255) NOT NULL,
+        base_url VARCHAR(512) NOT NULL,
+        api_key TEXT DEFAULT '',
+        enabled BOOLEAN DEFAULT true,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS upstream_models (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        provider_id UUID NOT NULL REFERENCES upstream_providers(id) ON DELETE CASCADE,
+        model_name VARCHAR(255) NOT NULL,
+        friendly_name VARCHAR(255),
+        context_length INT DEFAULT 8192,
+        is_active BOOLEAN DEFAULT true,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(provider_id, model_name)
+    );
+    """)
+
     conn.commit()
     cursor.close()
     conn.close()
