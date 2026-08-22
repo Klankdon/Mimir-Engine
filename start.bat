@@ -56,6 +56,5 @@ if not exist "dist" (
 echo.
 echo [4/4] Launching Mimir Engine Middleware Proxy...
 start http://localhost:8000
-python app.py
-
+python -m uvicorn app:app --host 0.0.0.0 --port 8000 --reload
 pause
