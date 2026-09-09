@@ -6,6 +6,7 @@ import asyncpg
 from fastapi import FastAPI, Request, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from db import init_db_and_storage, close_db
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("mimir-proxy")
