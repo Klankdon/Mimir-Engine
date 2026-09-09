@@ -16,33 +16,20 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localho
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global db_pool
-    logger.info("Initializing PostgreSQL pool and database schemas...")
-    db_pool = await asyncpg.create_pool(DATABASE_URL)
+    global http_client
+    logger.info("Starting Mimir Engine lifespan...")
+    
+    # Delegate Postgres setup to db.py
+    await init_db_and_storage()
+    
+    # Start HTTP Proxy Pool
+    http_client = httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0))
 
-    # Bootstrapping schema setup
-    async with db_pool.acquire() as conn:
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS upstream_providers (
-                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                name VARCHAR(255) NOT NULL,
-                base_url VARCHAR(512) NOT NULL,
-                api_key TEXT DEFAULT '',
-                enabled BOOLEAN DEFAULT true,
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-            );
+    yield  # Server executing
 
-            CREATE TABLE IF NOT EXISTS upstream_models (
-                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                provider_id UUID NOT NULL REFERENCES upstream_providers(id) ON DELETE CASCADE,
-                model_name VARCHAR(255) NOT NULL,
-                friendly_name VARCHAR(255),
-                context_length INT DEFAULT 8192,
-                is_active BOOLEAN DEFAULT true,
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(provider_id, model_name)
-            );
-        """)
+    # Graceful shutdown
+    await http_client.aclose()
+    await close_db()
 
     yield  # Application runs here
 
