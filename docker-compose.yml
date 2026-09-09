@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # --- Mimir Engine (FastAPI + Built-in Python UI) ---
   mimir-app:
