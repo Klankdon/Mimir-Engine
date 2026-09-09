@@ -1,6 +1,7 @@
 from dotenv import load_dotenv; load_dotenv()
 import os
 import logging
+import httpx
 from contextlib import asynccontextmanager
 import asyncpg
 from fastapi import FastAPI, Request, HTTPException, status
