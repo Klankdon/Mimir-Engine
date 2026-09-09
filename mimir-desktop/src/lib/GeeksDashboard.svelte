@@ -1,7 +1,7 @@
 <script lang="ts">
   import SidebarStatus from './SidebarStatus.svelte';
 
-  // State management for SubSurface Dev Mode
+  // State management for SubSurface Dev Mode using Svelte 5 Runes
   let devModeUnlocked = $state(false);
   let showWarningModal = $state(false);
   let activeTab = $state<'telemetry' | 'postgres'>('telemetry');
@@ -15,9 +15,12 @@
   ]);
 
   // Handle Dev Mode Toggle
-  function handleDevToggle() {
-    if (!devModeUnlocked) {
+  function handleDevToggle(e: Event) {
+    const target = e.target as HTMLInputElement;
+    if (target.checked) {
       showWarningModal = true;
+      // Keep checkbox visually unchecked until user confirms in modal
+      target.checked = false;
     } else {
       devModeUnlocked = false;
     }
@@ -100,13 +103,29 @@
       <div class="sub-controls">
         {#if devModeUnlocked}
           <div class="tab-group">
-            <button class="tab-btn" class:active={activeTab === 'telemetry'} on:click={() => activeTab = 'telemetry'}>Telemetry</button>
-            <button class="tab-btn" class:active={activeTab === 'postgres'} on:click={() => activeTab = 'postgres'}>SQL Tool</button>
+            <button 
+              class="tab-btn" 
+              class:active={activeTab === 'telemetry'} 
+              onclick={() => activeTab = 'telemetry'}
+            >
+              Telemetry
+            </button>
+            <button 
+              class="tab-btn" 
+              class:active={activeTab === 'postgres'} 
+              onclick={() => activeTab = 'postgres'}
+            >
+              SQL Tool
+            </button>
           </div>
         {/if}
 
         <label class="toggle-switch">
-          <input type="checkbox" checked={devModeUnlocked} on:change={handleDevToggle} />
+          <input 
+            type="checkbox" 
+            checked={devModeUnlocked} 
+            onchange={handleDevToggle} 
+          />
           <span class="slider"></span>
           <span class="toggle-label">Dev Mode</span>
         </label>
@@ -156,8 +175,8 @@
       <p class="sub-text">Are you sure you want to continue?</p>
       
       <div class="modal-actions">
-        <button class="btn btn-confirm" on:click={confirmDevAccess}>Yes</button>
-        <button class="btn btn-cancel" on:click={cancelDevAccess}>No</button>
+        <button class="btn btn-confirm" onclick={confirmDevAccess}>Yes</button>
+        <button class="btn btn-cancel" onclick={cancelDevAccess}>No</button>
       </div>
     </div>
   </div>
@@ -232,6 +251,13 @@
     font-family: monospace;
   }
 
+  /* Keywords & Tags */
+  .keyword-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+  .tag { background: rgba(56, 189, 248, 0.12); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); font-size: 0.72rem; padding: 3px 8px; border-radius: 4px; font-family: monospace; }
+  .memory-card { background: rgba(0, 0, 0, 0.3); border: 1px solid rgba(255, 255, 255, 0.08); padding: 10px; border-radius: 6px; }
+  .mem-id { font-size: 0.7rem; color: #a855f7; font-weight: bold; font-family: monospace; display: block; margin-bottom: 4px; }
+  .mem-text { margin: 0; font-size: 0.82rem; color: #cbd5e1; font-style: italic; }
+
   /* SubSurface Header & Controls */
   .subsurface-header {
     display: flex;
@@ -247,6 +273,10 @@
   .badge { font-size: 0.6rem; background: rgba(56, 189, 248, 0.15); color: #38bdf8; padding: 2px 6px; border-radius: 4px; }
 
   .sub-controls { display: flex; align-items: center; gap: 10px; }
+  .tab-group { display: flex; gap: 4px; }
+  .tab-btn { background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); color: #94a3b8; padding: 3px 8px; border-radius: 4px; font-size: 0.7rem; cursor: pointer; }
+  .tab-btn.active { background: rgba(56, 189, 248, 0.2); border-color: #38bdf8; color: #38bdf8; }
+
   .toggle-switch { display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 0.75rem; color: rgba(255, 255, 255, 0.7); }
 
   .console-bg { background: rgba(5, 8, 15, 0.8); font-family: "JetBrains Mono", monospace; }
@@ -261,6 +291,11 @@
   .log-type.egress { color: #10b981; }
   .log-msg { color: rgba(255, 255, 255, 0.85); }
 
+  /* SQL Editor */
+  .sql-editor { display: flex; flex-direction: column; gap: 8px; height: 100%; }
+  .sql-editor textarea { flex: 1; background: rgba(0, 0, 0, 0.5); border: 1px solid rgba(255, 255, 255, 0.1); color: #38bdf8; font-family: monospace; font-size: 0.8rem; padding: 8px; border-radius: 6px; resize: none; }
+  .run-btn { background: #38bdf8; color: #0b0f17; border: none; font-weight: bold; padding: 6px; border-radius: 4px; cursor: pointer; font-size: 0.75rem; align-self: flex-end; }
+
   /* Locked State */
   .locked-state { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; text-align: center; }
   .lock-icon { font-size: 1.8rem; margin-bottom: 8px; }
@@ -271,6 +306,8 @@
   .modal-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.75); backdrop-filter: blur(8px); display: flex; align-items: center; justify-content: center; z-index: 999; }
   .glass-modal { background: rgba(20, 24, 33, 0.9); border: 1px solid rgba(239, 68, 68, 0.4); border-radius: 12px; padding: 20px; width: 360px; color: #fff; }
   .modal-header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; color: #f87171; }
+  .modal-header h4 { margin: 0; font-size: 1rem; }
+  .sub-text { font-size: 0.8rem; color: #94a3b8; }
   .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
   .btn { padding: 6px 14px; border-radius: 6px; border: none; cursor: pointer; font-weight: 600; font-size: 0.8rem; }
   .btn-confirm { background: #ef4444; color: white; }
