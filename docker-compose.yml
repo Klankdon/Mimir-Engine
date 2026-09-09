@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-  # --- Mimir Engine (FastAPI + NiceGUI Control Panel) ---
+  # --- Mimir Engine (FastAPI + Built-in Python UI) ---
   mimir-app:
     build:
       context: .
@@ -9,7 +9,7 @@ services:
     container_name: mimir_engine
     restart: unless-stopped
     ports:
-      # Exposes NiceGUI Control Panel & API on custom port 59056
+      # Exposes Mimir API & Control Panel on port 59056
       - "${ENGINE_PORT:-59056}:59056"
     environment:
       - DB_HOST=mimir-db
