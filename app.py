@@ -134,6 +134,15 @@ async def delete_provider(provider_id: str):
             
     return {"status": "deleted", "id": provider_id}
 
+from fastapi.responses import FileResponse
+
+@app.get("/{full_path:path}")
+async def serve_spa(full_path: str):
+    # Serve static assets if they exist, otherwise fallback to index.html for client routing
+    file_path = os.path.join("dist", full_path)
+    if os.path.exists(file_path) and os.path.isfile(file_path):
+        return FileResponse(file_path)
+    return FileResponse("dist/index.html")
 
 # Mount static assets/frontend AFTER API routes
 if os.path.exists("dist"):
