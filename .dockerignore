@@ -1,0 +1,8 @@
+node_modules/
+mimir-desktop/node_modules/
+dist/
+mimir-desktop/dist/
+venv/
+__pycache__/
+*.pyc
+.env
