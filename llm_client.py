@@ -1,78 +1,54 @@
-import json
-import httpx
-from typing import AsyncGenerator
+import logging
+from db import query_similar_memories
 
-# Pre-configured Provider Profiles
-PROVIDERS = {
-    "Local (Ollama)": {
-        "base_url": "http://host.docker.internal:11434/v1](http://host.docker.internal:11434/v1",
-        "requires_key": False,
-        "default_model": "llama3"
-    },
-    "Local (KoboldCPP / vLLM)": {
-        "base_url": "http://localhost:5001/v1",
-        "requires_key": False,
-        "default_model": "default"
-    },
-    "OpenRouter": {
-        "base_url": "https://openrouter.ai/api/v1",
-        "requires_key": True,
-        "default_model": "anthropic/claude-3.5-sonnet"
-    },
-    "OpenAI": {
-        "base_url": "https://api.openai.com/v1",
-        "requires_key": True,
-        "default_model": "gpt-4o"
-    }
-}
+logger = logging.getLogger("mimir-injector")
 
-async def stream_llm_response(
-    provider_name: str,
-    api_key: str,
-    model_name: str,
-    messages: list[dict],
-    temperature: float = 0.7
-) -> AsyncGenerator[str, None]:
-    """Streams text back token-by-token from any OpenAI-compatible backend."""
+async def get_embedding(text: str) -> list[float]:
+    """
+    Generate a 384-dimension vector for the incoming prompt.
+    NOTE: Replace this placeholder with your actual embedding logic 
+    (e.g., calling a local SentenceTransformer like all-MiniLM-L6-v2, 
+    or an external embedding API).
+    """
+    return [0.0] * 384  # Placeholder matching pgvector(384)
+
+
+async def inject_memory_context(session_id: str, payload: dict) -> dict:
+    """
+    Intercepts the OpenAI-formatted payload, queries pgvector for relevant
+    past context, and injects it into the messages array before sending upstream.
+    """
+    messages = payload.get("messages", [])
+    if not messages:
+        return payload
+
+    # Extract the latest user query
+    latest_user_msg = next(
+        (m["content"] for m in reversed(messages) if m.get("role") == "user"), 
+        None
+    )
     
-    provider = PROVIDERS.get(provider_name, PROVIDERS["Local (Ollama)"])
-    base_url = provider["base_url"].rstrip("/")
-    url = f"{base_url}/chat/completions"
-    
-    headers = {"Content-Type": "application/json"}
-    if provider["requires_key"] and api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-    elif provider_name == "OpenRouter":
-        headers["Authorization"] = f"Bearer {api_key}"
-        headers["HTTP-Referer"] = "http://localhost:59056"
-        headers["X-Title"] = "Mimir Engine"
+    if not latest_user_msg:
+        return payload
+        
+    # 1. Vectorize the incoming prompt
+    query_vector = await get_embedding(latest_user_msg)
 
-    payload = {
-        "model": model_name or provider["default_model"],
-        "messages": messages,
-        "temperature": temperature,
-        "stream": True
-    }
+    # 2. Fetch similar past memories from pgvector (db.py)
+    memories = await query_similar_memories(session_id, query_vector, limit=3)
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        async with client.stream("POST", url, headers=headers, json=payload) as response:
-            if response.status_code != 200:
-                err_body = await response.aread()
-                yield f"[API Error {response.status_code}: {err_body.decode('utf-8')}]"
-                return
+    if memories:
+        # 3. Format the retrieved memories
+        context_blocks = "\n".join([f"[{m['text_id']}]: {m['content']}" for m in memories])
+        system_injection = {
+            "role": "system",
+            "content": f"Context recalled from past interactions:\n{context_blocks}\n\nUse this context to inform your response."
+        }
+        
+        # 4. Inject the system prompt right before the latest user message
+        messages.insert(-1, system_injection)
+        payload["messages"] = messages
+        
+        logger.info(f"SubSurface Vector: Injected {len(memories)} memories into payload for session {session_id}")
 
-            async for line in response.aiter_lines():
-                if not line or not line.startswith("data: "):
-                    continue
-                
-                data_str = line[6:].strip()
-                if data_str == "[DONE]":
-                    break
-                
-                try:
-                    data = json.loads(data_str)
-                    token = data["choices"][0]["delta"].get("content", "")
-                    if token:
-                        yield token
-                except json.JSONDecodeError:
-                    continue
+    return payload
