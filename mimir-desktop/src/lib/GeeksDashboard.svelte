@@ -1,25 +1,44 @@
 <script lang="ts">
+  import { onMount, onDestroy } from 'svelte';
   import SidebarStatus from './SidebarStatus.svelte';
 
-  // State management for SubSurface Dev Mode using Svelte 5 Runes
   let devModeUnlocked = $state(false);
   let showWarningModal = $state(false);
   let activeTab = $state<'telemetry' | 'postgres'>('telemetry');
 
-  // Sample telemetry data stream
-  let telemetryLogs = $state([
-    { id: 1042, time: '14:22:01', type: 'INGRESS', msg: 'Prompt received from proxy port 8000' },
-    { id: 1042, time: '14:22:01', type: 'VECTOR', msg: 'pgvector distance search: 3 matches found (threshold < 0.25)' },
-    { id: 1042, time: '14:22:02', type: 'INJECT', msg: 'Injected memory_id #1042 into prompt payload' },
-    { id: 1042, time: '14:22:02', type: 'EGRESS', msg: 'Payload forwarded to local LLM backend' }
-  ]);
+  // Split streams: one for backend telemetry, one for chat payload monitoring
+  let telemetryLogs = $state<{time: string, type: string, msg: string}[]>([]);
+  let chatStream = $state<{time: string, msg: string}[]>([]);
+  let eventSource: EventSource;
 
-  // Handle Dev Mode Toggle
+  onMount(() => {
+    eventSource = new EventSource('/api/logs/stream');
+
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        
+        if (data.level === 'CHAT') {
+          chatStream.push({ time: data.timestamp, msg: data.message });
+          if (chatStream.length > 8) chatStream.shift(); // Keep last 8 messages
+        } else {
+          telemetryLogs.push({ time: data.timestamp, type: data.level, msg: data.message });
+          if (telemetryLogs.length > 50) telemetryLogs.shift();
+        }
+      } catch (err) {
+        console.error("Failed to parse telemetry log:", err);
+      }
+    };
+  });
+
+  onDestroy(() => {
+    if (eventSource) eventSource.close();
+  });
+
   function handleDevToggle(e: Event) {
     const target = e.target as HTMLInputElement;
     if (target.checked) {
       showWarningModal = true;
-      // Keep checkbox visually unchecked until user confirms in modal
       target.checked = false;
     } else {
       devModeUnlocked = false;
@@ -38,7 +57,7 @@
 </script>
 
 <div class="dashboard-grid">
-  <!-- Panel 1: Left Control & Status Sidebar -->
+  <!-- Panel 1: Left Control Sidebar -->
   <div class="grid-panel sidebar-panel">
     <SidebarStatus 
       docId="doc_8f91a2b"
@@ -56,12 +75,22 @@
       <span class="dot green"></span>
       <h3>Active Chat Stream</h3>
     </div>
-    <div class="panel-content flex-center">
-      <p class="placeholder-text">Active Chat Window Connected & Intercepting</p>
+    <div class="panel-content">
+      <div class="chat-monitor">
+        {#if chatStream.length === 0}
+          <p class="placeholder-text" style="text-align: center; margin-top: 2rem;">Active Chat Window Connected & Intercepting</p>
+        {/if}
+        {#each chatStream as chat}
+          <div class="chat-bubble">
+            <span class="chat-time">{chat.time}</span>
+            <span class="chat-text">{chat.msg}</span>
+          </div>
+        {/each}
+      </div>
     </div>
   </div>
 
-  <!-- Panel 3: Right Top - pgvector Keyword Inspector -->
+  <!-- Panel 3: Right Top - pgvector Keywords -->
   <div class="grid-panel keywords-panel">
     <div class="panel-header">
       <span class="dot cyan"></span>
@@ -71,27 +100,27 @@
       <div class="keyword-tags">
         <span class="tag">#location: workshop</span>
         <span class="tag">#entity: user</span>
-        <span class="tag">#memory_id: 1042</span>
+        <span class="tag">#status: listening</span>
       </div>
       <div class="memory-card">
-        <span class="mem-id">memory_id: 1042</span>
-        <p class="mem-text">"User discussed constructing skin-on-frame canoe using local timber."</p>
+        <span class="mem-id">System Status</span>
+        <p class="mem-text">"Standing by for vector injection and memory routing."</p>
       </div>
     </div>
   </div>
 
-  <!-- Panel 4: Center Bottom - Database Monitor / Visual Query Tool -->
+  <!-- Panel 4: Center Bottom - Database Monitor -->
   <div class="grid-panel db-panel">
     <div class="panel-header">
       <span class="dot purple"></span>
       <h3>PostgreSQL / Table Monitor</h3>
     </div>
     <div class="panel-content flex-center">
-      <p class="placeholder-text">Embedded Table / NocoDB Grid View</p>
+      <p class="placeholder-text">Embedded Table / NocoDB Grid View Pending</p>
     </div>
   </div>
 
-  <!-- Panel 5: Right Bottom - SubSurface Console & Dev Tools -->
+  <!-- Panel 5: Right Bottom - SubSurface Console -->
   <div class="grid-panel subsurface-panel">
     <div class="subsurface-header">
       <div class="title-group">
@@ -103,29 +132,13 @@
       <div class="sub-controls">
         {#if devModeUnlocked}
           <div class="tab-group">
-            <button 
-              class="tab-btn" 
-              class:active={activeTab === 'telemetry'} 
-              onclick={() => activeTab = 'telemetry'}
-            >
-              Telemetry
-            </button>
-            <button 
-              class="tab-btn" 
-              class:active={activeTab === 'postgres'} 
-              onclick={() => activeTab = 'postgres'}
-            >
-              SQL Tool
-            </button>
+            <button class="tab-btn" class:active={activeTab === 'telemetry'} onclick={() => activeTab = 'telemetry'}>Telemetry</button>
+            <button class="tab-btn" class:active={activeTab === 'postgres'} onclick={() => activeTab = 'postgres'}>SQL Tool</button>
           </div>
         {/if}
 
         <label class="toggle-switch">
-          <input 
-            type="checkbox" 
-            checked={devModeUnlocked} 
-            onchange={handleDevToggle} 
-          />
+          <input type="checkbox" checked={devModeUnlocked} onchange={handleDevToggle} />
           <span class="slider"></span>
           <span class="toggle-label">Dev Mode</span>
         </label>
@@ -136,6 +149,13 @@
       {#if devModeUnlocked}
         {#if activeTab === 'telemetry'}
           <div class="log-stream">
+            {#if telemetryLogs.length === 0}
+              <div class="log-line">
+                <span class="log-time">[{new Date().toLocaleTimeString('en-US', {hour12: false})}]</span>
+                <span class="log-type egress">SYSTEM</span>
+                <span class="log-msg">SubSurface connection established. Awaiting traffic...</span>
+              </div>
+            {/if}
             {#each telemetryLogs as log}
               <div class="log-line">
                 <span class="log-time">[{log.time}]</span>
@@ -146,7 +166,7 @@
           </div>
         {:else}
           <div class="sql-editor">
-            <textarea placeholder="SELECT * FROM mimir_memories WHERE memory_id = 1042;"></textarea>
+            <textarea placeholder="SELECT * FROM memory_db;"></textarea>
             <button class="run-btn">Execute Query</button>
           </div>
         {/if}
@@ -169,11 +189,8 @@
         <span class="warning-icon">⚠️</span>
         <h4>SubSurface Warning</h4>
       </div>
-      <p>
-        Tampering with settings or executing raw commands in the <strong>SubSurface</strong> screen can break <strong>Mimir Engine</strong> unless you know what you are doing.
-      </p>
+      <p>Tampering with settings or executing raw commands in the <strong>SubSurface</strong> screen can break <strong>Mimir Engine</strong> unless you know what you are doing.</p>
       <p class="sub-text">Are you sure you want to continue?</p>
-      
       <div class="modal-actions">
         <button class="btn btn-confirm" onclick={confirmDevAccess}>Yes</button>
         <button class="btn btn-cancel" onclick={cancelDevAccess}>No</button>
@@ -183,73 +200,29 @@
 {/if}
 
 <style>
-  /* 5-Panel CSS Grid Layout */
-  .dashboard-grid {
-    display: grid;
-    grid-template-columns: 270px 1fr 340px;
-    grid-template-rows: 1fr 1fr;
-    gap: 12px;
-    height: 100%;
-    width: 100%;
-    box-sizing: border-box;
-  }
-
+  /* Base Grid */
+  .dashboard-grid { display: grid; grid-template-columns: 270px 1fr 340px; grid-template-rows: 1fr 1fr; gap: 12px; height: 100%; width: 100%; box-sizing: border-box; }
   .sidebar-panel { grid-column: 1; grid-row: 1 / 3; }
   .chat-panel { grid-column: 2; grid-row: 1; }
   .keywords-panel { grid-column: 3; grid-row: 1; }
   .db-panel { grid-column: 2; grid-row: 2; }
   .subsurface-panel { grid-column: 3; grid-row: 2; }
 
-  /* Generic Panel Container */
-  .grid-panel {
-    background: rgba(15, 23, 42, 0.6);
-    backdrop-filter: blur(12px);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 12px;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-  }
-
-  .panel-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 10px 14px;
-    background: rgba(0, 0, 0, 0.2);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-  }
-
-  .panel-header h3 {
-    margin: 0;
-    font-size: 0.8rem;
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
-    color: rgba(255, 255, 255, 0.7);
-  }
-
+  /* Panels */
+  .grid-panel { background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
+  .panel-header { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: rgba(0, 0, 0, 0.2); border-bottom: 1px solid rgba(255, 255, 255, 0.06); }
+  .panel-header h3 { margin: 0; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.8px; color: rgba(255, 255, 255, 0.7); }
   .dot { width: 8px; height: 8px; border-radius: 50%; }
-  .dot.green { background: #10b981; }
-  .dot.cyan { background: #38bdf8; }
-  .dot.purple { background: #a855f7; }
+  .dot.green { background: #10b981; } .dot.cyan { background: #38bdf8; } .dot.purple { background: #a855f7; }
+  .panel-content { flex: 1; padding: 14px; overflow-y: auto; }
+  .flex-center { display: flex; align-items: center; justify-content: center; }
+  .placeholder-text { color: rgba(255, 255, 255, 0.3); font-size: 0.85rem; font-family: monospace; }
 
-  .panel-content {
-    flex: 1;
-    padding: 14px;
-    overflow-y: auto;
-  }
-
-  .flex-center {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .placeholder-text {
-    color: rgba(255, 255, 255, 0.3);
-    font-size: 0.85rem;
-    font-family: monospace;
-  }
+  /* Chat Monitor */
+  .chat-monitor { display: flex; flex-direction: column; gap: 8px; }
+  .chat-bubble { background: rgba(0, 0, 0, 0.3); border-left: 3px solid #10b981; padding: 8px 12px; border-radius: 4px; font-family: "JetBrains Mono", monospace; font-size: 0.75rem; }
+  .chat-time { color: rgba(255, 255, 255, 0.3); font-size: 0.65rem; margin-right: 8px; }
+  .chat-text { color: #cbd5e1; line-height: 1.4; }
 
   /* Keywords & Tags */
   .keyword-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
@@ -258,51 +231,35 @@
   .mem-id { font-size: 0.7rem; color: #a855f7; font-weight: bold; font-family: monospace; display: block; margin-bottom: 4px; }
   .mem-text { margin: 0; font-size: 0.82rem; color: #cbd5e1; font-style: italic; }
 
-  /* SubSurface Header & Controls */
-  .subsurface-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 8px 12px;
-    background: rgba(0, 0, 0, 0.3);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  }
-
+  /* SubSurface Controls */
+  .subsurface-header { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: rgba(0, 0, 0, 0.3); border-bottom: 1px solid rgba(255, 255, 255, 0.08); }
   .title-group { display: flex; align-items: center; gap: 6px; }
   .title-group h3 { margin: 0; font-size: 0.85rem; color: #38bdf8; }
   .badge { font-size: 0.6rem; background: rgba(56, 189, 248, 0.15); color: #38bdf8; padding: 2px 6px; border-radius: 4px; }
-
   .sub-controls { display: flex; align-items: center; gap: 10px; }
   .tab-group { display: flex; gap: 4px; }
   .tab-btn { background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); color: #94a3b8; padding: 3px 8px; border-radius: 4px; font-size: 0.7rem; cursor: pointer; }
   .tab-btn.active { background: rgba(56, 189, 248, 0.2); border-color: #38bdf8; color: #38bdf8; }
-
   .toggle-switch { display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 0.75rem; color: rgba(255, 255, 255, 0.7); }
-
   .console-bg { background: rgba(5, 8, 15, 0.8); font-family: "JetBrains Mono", monospace; }
 
   /* Log Stream */
   .log-line { font-size: 0.75rem; margin-bottom: 6px; line-height: 1.4; }
   .log-time { color: rgba(255, 255, 255, 0.4); }
   .log-type { font-weight: bold; margin: 0 4px; }
-  .log-type.ingress { color: #38bdf8; }
-  .log-type.vector { color: #a855f7; }
-  .log-type.inject { color: #f59e0b; }
-  .log-type.egress { color: #10b981; }
+  .log-type.ingress { color: #38bdf8; } .log-type.vector { color: #a855f7; } .log-type.inject { color: #f59e0b; } .log-type.egress { color: #10b981; } .log-type.error { color: #ef4444; }
   .log-msg { color: rgba(255, 255, 255, 0.85); }
 
-  /* SQL Editor */
+  /* Locked State & SQL Editor */
   .sql-editor { display: flex; flex-direction: column; gap: 8px; height: 100%; }
   .sql-editor textarea { flex: 1; background: rgba(0, 0, 0, 0.5); border: 1px solid rgba(255, 255, 255, 0.1); color: #38bdf8; font-family: monospace; font-size: 0.8rem; padding: 8px; border-radius: 6px; resize: none; }
   .run-btn { background: #38bdf8; color: #0b0f17; border: none; font-weight: bold; padding: 6px; border-radius: 4px; cursor: pointer; font-size: 0.75rem; align-self: flex-end; }
-
-  /* Locked State */
   .locked-state { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; text-align: center; }
   .lock-icon { font-size: 1.8rem; margin-bottom: 8px; }
   .locked-state p { margin: 0; font-size: 0.85rem; color: rgba(255, 255, 255, 0.7); }
   .sub-lock { font-size: 0.75rem !important; color: rgba(255, 255, 255, 0.4) !important; margin-top: 4px !important; }
 
-  /* Modal Styling */
+  /* Modal */
   .modal-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.75); backdrop-filter: blur(8px); display: flex; align-items: center; justify-content: center; z-index: 999; }
   .glass-modal { background: rgba(20, 24, 33, 0.9); border: 1px solid rgba(239, 68, 68, 0.4); border-radius: 12px; padding: 20px; width: 360px; color: #fff; }
   .modal-header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; color: #f87171; }
