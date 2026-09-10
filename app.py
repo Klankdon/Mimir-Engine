@@ -1,20 +1,22 @@
 from dotenv import load_dotenv; load_dotenv()
 import os
+import json
 import logging
 import httpx
 from contextlib import asynccontextmanager
-import asyncpg
 from fastapi import FastAPI, Request, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
+
+import db
 from db import init_db_and_storage, close_db
+from llm_client import inject_memory_context
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("mimir-proxy")
 
-# Database Connection Pool Global
-db_pool: asyncpg.Pool = None
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/mimir")
+http_client: httpx.AsyncClient = None
 
 
 @asynccontextmanager
@@ -22,22 +24,18 @@ async def lifespan(app: FastAPI):
     global http_client
     logger.info("Starting Mimir Engine lifespan...")
     
-    # Delegate Postgres setup to db.py
+    # Initialize Postgres schemas and asyncpg pool
     await init_db_and_storage()
     
-    # Start HTTP Proxy Pool
+    # Start HTTP Proxy Pool for upstream streaming
     http_client = httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0))
 
-    yield  # Server executing
+    yield  # Server execution block
 
     # Graceful shutdown
+    logger.info("Closing HTTP proxy pool and database connections...")
     await http_client.aclose()
     await close_db()
-
-    yield  # Application runs here
-
-    logger.info("Closing database connection pool...")
-    await db_pool.close()
 
 
 app = FastAPI(
@@ -59,7 +57,10 @@ app.add_middleware(
 
 @app.get("/api/providers")
 async def get_providers():
-    async with db_pool.acquire() as conn:
+    if not db.db_pool:
+        raise HTTPException(status_code=500, detail="Database pool not initialized")
+    
+    async with db.db_pool.acquire() as conn:
         query = """
             SELECT 
                 p.id::text,
@@ -88,9 +89,12 @@ async def get_providers():
 
 @app.post("/api/providers")
 async def add_provider(request: Request):
+    if not db.db_pool:
+        raise HTTPException(status_code=500, detail="Database pool not initialized")
+    
     data = await request.json()
     
-    async with db_pool.acquire() as conn:
+    async with db.db_pool.acquire() as conn:
         async with conn.transaction():
             # 1. Insert Provider
             provider_row = await conn.fetchrow("""
@@ -117,19 +121,22 @@ async def add_provider(request: Request):
 
 @app.delete("/api/providers/{provider_id}")
 async def delete_provider(provider_id: str):
-    async with db_pool.acquire() as conn:
+    if not db.db_pool:
+        raise HTTPException(status_code=500, detail="Database pool not initialized")
+        
+    async with db.db_pool.acquire() as conn:
         result = await conn.execute("DELETE FROM upstream_providers WHERE id = $1::uuid;", provider_id)
         if result == "DELETE 0":
             raise HTTPException(status_code=404, detail="Provider not found")
             
     return {"status": "deleted", "id": provider_id}
 
-from fastapi.responses import JSONResponse, StreamingResponse
-from llm_client import inject_memory_context
+
+# --- OpenAI Compatible Proxy Routes ---
 
 @app.api_route("/v1/{path:path}", methods=["GET", "POST"])
 async def proxy_openai_routes(path: str, request: Request):
-    # 1. Mock the models endpoint so Agnai's "Test Connection" passes
+    # 1. Mock the models endpoint so Agnai / SillyTavern connection tests pass
     if path == "models" and request.method == "GET":
         return JSONResponse({
             "object": "list",
@@ -139,28 +146,69 @@ async def proxy_openai_routes(path: str, request: Request):
     # 2. Intercept and inject vector memory for chat completions
     if path == "chat/completions" and request.method == "POST":
         payload = await request.json()
-        enriched_payload = await inject_memory_context("default_session", payload)
-        content = json.dumps(enriched_payload).encode('utf-8')
         
-        # NOTE: Add your upstream routing logic here using http_client
-        # target_url = "https://openrouter.ai/api/v1/chat/completions"
-        # req = http_client.build_request(...)
-        # return StreamingResponse(...)
+        # Inject Memory Context via local vector RAG
+        session_id = payload.get("user", "default_session")
+        enriched_payload = await inject_memory_context(session_id, payload)
         
-        return JSONResponse({"status": "Proxy logic pending implementation"})
+        # Dynamically resolve enabled upstream provider from Postgres
+        target_url = None
+        api_key = ""
+        
+        if db.db_pool:
+            async with db.db_pool.acquire() as conn:
+                row = await conn.fetchrow("""
+                    SELECT base_url, api_key FROM upstream_providers 
+                    WHERE enabled = true 
+                    ORDER BY created_at DESC LIMIT 1;
+                """)
+                if row:
+                    base_url = row["base_url"].rstrip("/")
+                    if base_url.endswith("/chat/completions"):
+                        target_url = base_url
+                    elif base_url.endswith("/v1"):
+                        target_url = f"{base_url}/chat/completions"
+                    else:
+                        target_url = f"{base_url}/v1/chat/completions"
+                    api_key = row["api_key"]
+
+        # Default fallback to OpenRouter if no active provider is saved in DB
+        if not target_url:
+            target_url = "https://openrouter.ai/api/v1/chat/completions"
+            api_key = os.getenv("OPENROUTER_API_KEY", "")
+
+        headers = {
+            "Content-Type": "application/json",
+            "HTTP-Referer": "http://localhost:59056",
+            "X-Title": "Mimir Engine"
+        }
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+
+        # Stream response chunks directly back to Agnai in real-time
+        async def stream_generator():
+            try:
+                async with http_client.stream("POST", target_url, json=enriched_payload, headers=headers) as response:
+                    async for chunk in response.aiter_bytes():
+                        yield chunk
+            except Exception as e:
+                logger.error(f"Upstream streaming exception: {e}")
+                err_payload = json.dumps({"error": str(e)}).encode("utf-8")
+                yield f"data: {err_payload}\n\n".encode("utf-8")
+
+        return StreamingResponse(stream_generator(), media_type="text/event-stream")
 
     return JSONResponse(status_code=404, content={"error": "Endpoint not found in Mimir Engine"})
 
-from fastapi.responses import FileResponse
+
+# --- Static Assets & Frontend SPA Fallback ---
 
 @app.get("/{full_path:path}")
 async def serve_spa(full_path: str):
-    # Serve static assets if they exist, otherwise fallback to index.html for client routing
     file_path = os.path.join("dist", full_path)
     if os.path.exists(file_path) and os.path.isfile(file_path):
         return FileResponse(file_path)
     return FileResponse("dist/index.html")
 
-# Mount static assets/frontend AFTER API routes
 if os.path.exists("dist"):
     app.mount("/", StaticFiles(directory="dist", html=True), name="static")
