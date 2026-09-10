@@ -124,6 +124,33 @@ async def delete_provider(provider_id: str):
             
     return {"status": "deleted", "id": provider_id}
 
+from fastapi.responses import JSONResponse, StreamingResponse
+from llm_client import inject_memory_context
+
+@app.api_route("/v1/{path:path}", methods=["GET", "POST", "OPTIONS"])
+async def proxy_openai_routes(path: str, request: Request):
+    # 1. Mock the models endpoint so Agnai's "Test Connection" passes
+    if path == "models" and request.method == "GET":
+        return JSONResponse({
+            "object": "list",
+            "data": [{"id": "mimir-default", "object": "model", "created": 0, "owned_by": "mimir"}]
+        })
+
+    # 2. Intercept and inject vector memory for chat completions
+    if path == "chat/completions" and request.method == "POST":
+        payload = await request.json()
+        enriched_payload = await inject_memory_context("default_session", payload)
+        content = json.dumps(enriched_payload).encode('utf-8')
+        
+        # NOTE: Add your upstream routing logic here using http_client
+        # target_url = "https://openrouter.ai/api/v1/chat/completions"
+        # req = http_client.build_request(...)
+        # return StreamingResponse(...)
+        
+        return JSONResponse({"status": "Proxy logic pending implementation"})
+
+    return JSONResponse(status_code=404, content={"error": "Endpoint not found in Mimir Engine"})
+
 from fastapi.responses import FileResponse
 
 @app.get("/{full_path:path}")
