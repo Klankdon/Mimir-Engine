@@ -82,7 +82,24 @@
 
   function removeProvider(id: string) {
     upstreamProviders = upstreamProviders.filter(p => p.id !== id);
-    // Optionally trigger DELETE /api/providers/:id here
+    // Trigger DELETE /api/providers/:id here if hooked up to DB fetch
+  }
+
+  // --- New Test Connection Function ---
+  async function testConnection(id: string) {
+    try {
+      const response = await fetch(`/api/providers/${id}/test`);
+      const data = await response.json();
+      
+      if (data.status === 'success') {
+        alert(`✅ Success: ${data.message}`);
+      } else {
+        alert(`❌ Failed: ${data.message}`);
+      }
+    } catch (err) {
+      alert(`❌ Network Error: Could not reach the test endpoint.`);
+      console.error(err);
+    }
   }
 </script>
 
@@ -105,7 +122,10 @@
           <strong>{provider.name}</strong>
           <code>{provider.baseUrl}</code>
         </div>
-        <button class="delete-btn" onclick={() => removeProvider(provider.id)}>🗑️</button>
+        <div class="action-buttons">
+          <button class="test-btn" onclick={() => testConnection(provider.id)} title="Test Connection">🔌 Test</button>
+          <button class="delete-btn" onclick={() => removeProvider(provider.id)} title="Delete Provider">🗑️</button>
+        </div>
       </div>
     {/each}
   </div>
@@ -239,5 +259,19 @@
   }
   .provider-info { display: flex; flex-direction: column; flex: 1; }
   .provider-info code { font-size: 0.75rem; color: rgba(255, 255, 255, 0.5); }
-  .delete-btn { background: none; border: none; cursor: pointer; }
+  
+  .action-buttons { display: flex; gap: 8px; align-items: center; }
+  .delete-btn { background: none; border: none; cursor: pointer; font-size: 1.1rem; }
+  
+  .test-btn {
+    background: rgba(16, 185, 129, 0.2);
+    border: 1px solid rgba(16, 185, 129, 0.4);
+    color: #10b981;
+    border-radius: 6px;
+    padding: 4px 10px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    font-weight: bold;
+  }
+  .test-btn:hover { background: rgba(16, 185, 129, 0.3); }
 </style>
