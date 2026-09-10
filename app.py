@@ -131,7 +131,53 @@ async def delete_provider(provider_id: str):
             
     return {"status": "deleted", "id": provider_id}
 
-
+@app.get("/api/providers/{provider_id}/test")
+async def test_provider_connection(provider_id: str):
+    if not db.db_pool:
+        raise HTTPException(status_code=500, detail="Database pool not initialized")
+        
+    async with db.db_pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT name, base_url, api_key 
+            FROM upstream_providers 
+            WHERE id = $1::uuid;
+        """, provider_id)
+        
+        if not row:
+            raise HTTPException(status_code=404, detail="Provider not found")
+            
+    base_url = row["base_url"].rstrip("/")
+    api_key = row["api_key"]
+    
+    # Intelligently resolve the /models endpoint based on the saved base_url
+    if base_url.endswith("/v1"):
+        target_url = f"{base_url}/models"
+    elif base_url.endswith("/chat/completions"):
+        target_url = base_url.replace("/chat/completions", "/models")
+    else:
+        target_url = f"{base_url}/v1/models"
+        
+    headers = {
+        "Content-Type": "application/json",
+        "HTTP-Referer": "http://localhost:59056",
+        "X-Title": "Mimir Engine"
+    }
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+        
+    try:
+        # Ping the provider's /models endpoint to verify authentication and uptime
+        response = await http_client.get(target_url, headers=headers, timeout=10.0)
+        
+        if response.status_code == 200:
+            return {"status": "success", "message": f"Successfully connected to {row['name']}!"}
+        else:
+            return {"status": "error", "message": f"HTTP {response.status_code}: {response.text}"}
+            
+    except Exception as e:
+        logger.error(f"Provider test connection failed for {row['name']}: {e}")
+        return {"status": "error", "message": str(e)}
+        
 # --- OpenAI Compatible Proxy Routes ---
 
 @app.api_route("/v1/{path:path}", methods=["GET", "POST"])
