@@ -3,6 +3,8 @@ import os
 import json
 import logging
 import httpx
+import asyncio
+from datetime import datetime
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,6 +20,17 @@ logger = logging.getLogger("mimir-proxy")
 
 http_client: httpx.AsyncClient = None
 
+# Global set to hold active SSE client queues for the dashboard
+log_clients = set()
+
+async def broadcast_log(level: str, message: str):
+    """Pushes live log events to all connected UI clients."""
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    log_entry = json.dumps({"timestamp": timestamp, "level": level, "message": message})
+    
+    # Broadcast to all active dashboard tabs
+    for client_queue in list(log_clients):
+        await client_queue.put(log_entry)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -54,6 +67,26 @@ app.add_middleware(
 
 
 # --- REST API Endpoints ---
+
+@app.get("/api/logs/stream")
+async def stream_logs(request: Request):
+    """SSE Endpoint for the Geeks Dashboard to listen to."""
+    client_queue = asyncio.Queue()
+    log_clients.add(client_queue)
+
+    async def event_generator():
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                log_entry = await client_queue.get()
+                yield f"data: {log_entry}\n\n"
+        except asyncio.CancelledError:
+            pass
+        finally:
+            log_clients.remove(client_queue)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 @app.get("/api/providers")
 async def get_providers():
@@ -193,9 +226,26 @@ async def proxy_openai_routes(path: str, request: Request):
     if path == "chat/completions" and request.method == "POST":
         payload = await request.json()
         
+        # Broadcast Ingress
+        await broadcast_log("INGRESS", "Payload intercepted from chat client.")
+        
+        # --- NEW: Extract and broadcast the active chat context ---
+        messages = payload.get("messages", [])
+        for msg in messages[-3:]:
+            role = str(msg.get("role", "UNKNOWN")).upper()
+            content = str(msg.get("content", ""))
+            preview = (content[:150] + "...") if len(content) > 150 else content
+            await broadcast_log("CHAT", f"[{role}] {preview}")
+        # ----------------------------------------------------------
+        
         # Inject Memory Context via local vector RAG
         session_id = payload.get("user", "default_session")
+        
+        # Broadcast Vector Activity
+        await broadcast_log("VECTOR", f"Scanning pgvector for session: {session_id}")
         enriched_payload = await inject_memory_context(session_id, payload)
+        
+        await broadcast_log("INJECT", "Memory context woven into payload.")
         
         # Dynamically resolve enabled upstream provider from Postgres
         target_url = None
@@ -231,6 +281,8 @@ async def proxy_openai_routes(path: str, request: Request):
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
 
+        await broadcast_log("EGRESS", f"Forwarding payload to upstream: {target_url}")
+
         # Stream response chunks directly back to Agnai in real-time
         async def stream_generator():
             try:
@@ -239,6 +291,7 @@ async def proxy_openai_routes(path: str, request: Request):
                         yield chunk
             except Exception as e:
                 logger.error(f"Upstream streaming exception: {e}")
+                await broadcast_log("ERROR", f"Upstream streaming exception: {str(e)}")
                 err_payload = json.dumps({"error": str(e)}).encode("utf-8")
                 yield f"data: {err_payload}\n\n".encode("utf-8")
 
