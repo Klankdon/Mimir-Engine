@@ -127,7 +127,7 @@ async def delete_provider(provider_id: str):
 from fastapi.responses import JSONResponse, StreamingResponse
 from llm_client import inject_memory_context
 
-@app.api_route("/v1/{path:path}", methods=["GET", "POST", "OPTIONS"])
+@app.api_route("/v1/{path:path}", methods=["GET", "POST"])
 async def proxy_openai_routes(path: str, request: Request):
     # 1. Mock the models endpoint so Agnai's "Test Connection" passes
     if path == "models" and request.method == "GET":
