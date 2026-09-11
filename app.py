@@ -268,10 +268,17 @@ async def proxy_openai_routes(path: str, request: Request):
                         target_url = f"{base_url}/v1/chat/completions"
                     api_key = row["api_key"]
 
-        # Default fallback to OpenRouter if no active provider is saved in DB
+        # No active provider found - Hard stop to prevent unauthorized fallback traffic
         if not target_url:
-            target_url = "https://openrouter.ai/api/v1/chat/completions"
-            api_key = os.getenv("OPENROUTER_API_KEY", "")
+            err_msg = "No enabled upstream provider configured. Please add one in the Integrations Hub."
+            logger.error(err_msg)
+            await broadcast_log("ERROR", err_msg)
+            
+            # Stream the error back to the client natively so they see it in SillyTavern/Agnai
+            async def error_generator():
+                yield f'data: {json.dumps({"error": err_msg})}\n\n'.encode("utf-8")
+                
+            return StreamingResponse(error_generator(), media_type="text/event-stream")
 
         headers = {
             "Content-Type": "application/json",
