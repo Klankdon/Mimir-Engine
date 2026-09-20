@@ -1,6 +1,7 @@
 from dotenv import load_dotenv; load_dotenv()
 import os
 import json
+import uuid
 import logging
 import httpx
 import asyncio
@@ -12,8 +13,8 @@ from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
 import db
-from db import init_db_and_storage, close_db
-from llm_client import inject_memory_context
+from db import init_db_and_storage, close_db, save_memory_chunk
+from llm_client import inject_memory_context, generate_embedding
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("mimir-proxy")
@@ -229,14 +230,13 @@ async def proxy_openai_routes(path: str, request: Request):
         # Broadcast Ingress
         await broadcast_log("INGRESS", "Payload intercepted from chat client.")
         
-        # --- NEW: Extract and broadcast the active chat context ---
+        # Extract and broadcast the active chat context
         messages = payload.get("messages", [])
         for msg in messages[-3:]:
             role = str(msg.get("role", "UNKNOWN")).upper()
             content = str(msg.get("content", ""))
             preview = (content[:150] + "...") if len(content) > 150 else content
             await broadcast_log("CHAT", f"[{role}] {preview}")
-        # ----------------------------------------------------------
         
         # Inject Memory Context via local vector RAG
         session_id = payload.get("user", "default_session")
@@ -265,7 +265,7 @@ async def proxy_openai_routes(path: str, request: Request):
                     elif base_url.endswith("/v1"):
                         target_url = f"{base_url}/chat/completions"
                     else:
-                        target_url = f"{base_url}/v1/chat/completions"
+                        target_url = f"{base_url}/v1/completions"
                     api_key = row["api_key"]
 
         # No active provider found - Hard stop to prevent unauthorized fallback traffic
@@ -274,7 +274,6 @@ async def proxy_openai_routes(path: str, request: Request):
             logger.error(err_msg)
             await broadcast_log("ERROR", err_msg)
             
-            # Stream the error back to the client natively so they see it in SillyTavern/Agnai
             async def error_generator():
                 yield f'data: {json.dumps({"error": err_msg})}\n\n'.encode("utf-8")
                 
@@ -290,12 +289,48 @@ async def proxy_openai_routes(path: str, request: Request):
 
         await broadcast_log("EGRESS", f"Forwarding payload to upstream: {target_url}")
 
-        # Stream response chunks directly back to Agnai in real-time
+        # Stream response chunks back to client while accumulating text for memory write-back
         async def stream_generator():
+            full_response_text = ""
+            active_model = payload.get("model", "unknown-upstream")
             try:
                 async with http_client.stream("POST", target_url, json=enriched_payload, headers=headers) as response:
                     async for chunk in response.aiter_bytes():
                         yield chunk
+                        
+                        # Parse SSE text stream delta chunks
+                        chunk_str = chunk.decode("utf-8", errors="ignore")
+                        for line in chunk_str.splitlines():
+                            if line.startswith("data: ") and line.strip() != "data: [DONE]":
+                                try:
+                                    data = json.loads(line[6:])
+                                    delta = data.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                                    if delta:
+                                        full_response_text += delta
+                                except Exception:
+                                    pass
+
+                # Upon successful stream completion, vectorize and write to pgvector & disk
+                if full_response_text.strip():
+                    doc_id = str(uuid.uuid4())
+                    text_id = f"msg_{int(datetime.now().timestamp())}"
+                    
+                    # Compute local 384-dim embedding
+                    embedding = await generate_embedding(full_response_text)
+                    
+                    # Persist record
+                    await save_memory_chunk(
+                        doc_id=doc_id,
+                        parent_id=session_id,
+                        session_id=session_id,
+                        persona="Assistant",
+                        text_id=text_id,
+                        content=full_response_text,
+                        embedding=embedding,
+                        metadata={"source_model": active_model}
+                    )
+                    await broadcast_log("MEMORY", f"Saved memory chunk ({len(full_response_text)} chars, model: {active_model})")
+
             except Exception as e:
                 logger.error(f"Upstream streaming exception: {e}")
                 await broadcast_log("ERROR", f"Upstream streaming exception: {str(e)}")
