@@ -260,12 +260,15 @@ async def proxy_openai_routes(path: str, request: Request):
                 """)
                 if row:
                     base_url = row["base_url"].rstrip("/")
+                    
+                    # Cleanly resolve OpenRouter/OpenAI paths without doubling /v1
                     if base_url.endswith("/chat/completions"):
                         target_url = base_url
                     elif base_url.endswith("/v1"):
                         target_url = f"{base_url}/chat/completions"
                     else:
-                        target_url = f"{base_url}/v1/completions"
+                        target_url = f"{base_url}/v1/chat/completions"
+                        
                     api_key = row["api_key"]
 
         # No active provider found - Hard stop to prevent unauthorized fallback traffic
@@ -293,15 +296,18 @@ async def proxy_openai_routes(path: str, request: Request):
         async def stream_generator():
             full_response_text = ""
             active_model = payload.get("model", "unknown-upstream")
+            buffer = ""
             try:
                 async with http_client.stream("POST", target_url, json=enriched_payload, headers=headers) as response:
                     async for chunk in response.aiter_bytes():
                         yield chunk
                         
-                        # Parse SSE text stream delta chunks
-                        chunk_str = chunk.decode("utf-8", errors="ignore")
-                        for line in chunk_str.splitlines():
-                            if line.startswith("data: ") and line.strip() != "data: [DONE]":
+                        # Buffer and parse SSE text stream delta chunks safely
+                        buffer += chunk.decode("utf-8", errors="ignore")
+                        while "\n" in buffer:
+                            line, buffer = buffer.split("\n", 1)
+                            line = line.strip()
+                            if line.startswith("data: ") and line != "data: [DONE]":
                                 try:
                                     data = json.loads(line[6:])
                                     delta = data.get("choices", [{}])[0].get("delta", {}).get("content", "")
