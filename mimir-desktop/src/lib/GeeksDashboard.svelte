@@ -6,7 +6,6 @@
   let showWarningModal = $state(false);
   let activeTab = $state<'telemetry' | 'postgres'>('telemetry');
 
-  // Split streams: one for backend telemetry, one for chat payload monitoring
   let telemetryLogs = $state<{time: string, type: string, msg: string}[]>([]);
   let chatStream = $state<{time: string, msg: string}[]>([]);
   let eventSource: EventSource;
@@ -20,7 +19,7 @@
         
         if (data.level === 'CHAT') {
           chatStream.push({ time: data.timestamp, msg: data.message });
-          if (chatStream.length > 8) chatStream.shift(); // Keep last 8 messages
+          if (chatStream.length > 8) chatStream.shift();
         } else {
           telemetryLogs.push({ time: data.timestamp, type: data.level, msg: data.message });
           if (telemetryLogs.length > 50) telemetryLogs.shift();
@@ -57,7 +56,6 @@
 </script>
 
 <div class="dashboard-grid">
-  <!-- Panel 1: Left Control Sidebar -->
   <div class="grid-panel sidebar-panel">
     <SidebarStatus 
       docId="doc_8f91a2b"
@@ -69,7 +67,6 @@
     />
   </div>
 
-  <!-- Panel 2: Center Top - Active Chat Window -->
   <div class="grid-panel chat-panel">
     <div class="panel-header">
       <span class="dot green"></span>
@@ -90,7 +87,6 @@
     </div>
   </div>
 
-  <!-- Panel 3: Right Top - pgvector Keywords -->
   <div class="grid-panel keywords-panel">
     <div class="panel-header">
       <span class="dot cyan"></span>
@@ -109,7 +105,6 @@
     </div>
   </div>
 
-  <!-- Panel 4: Center Bottom - Database Monitor -->
   <div class="grid-panel db-panel">
     <div class="panel-header">
       <span class="dot purple"></span>
@@ -120,7 +115,6 @@
     </div>
   </div>
 
-  <!-- Panel 5: Right Bottom - SubSurface Console -->
   <div class="grid-panel subsurface-panel">
     <div class="subsurface-header">
       <div class="title-group">
@@ -181,7 +175,6 @@
   </div>
 </div>
 
-<!-- Developer Warning Modal -->
 {#if showWarningModal}
   <div class="modal-backdrop">
     <div class="glass-modal">
@@ -200,7 +193,6 @@
 {/if}
 
 <style>
-  /* Base Grid */
   .dashboard-grid { display: grid; grid-template-columns: 270px 1fr 340px; grid-template-rows: 1fr 1fr; gap: 12px; height: 100%; width: 100%; box-sizing: border-box; }
   .sidebar-panel { grid-column: 1; grid-row: 1 / 3; }
   .chat-panel { grid-column: 2; grid-row: 1; }
@@ -208,7 +200,6 @@
   .db-panel { grid-column: 2; grid-row: 2; }
   .subsurface-panel { grid-column: 3; grid-row: 2; }
 
-  /* Panels */
   .grid-panel { background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
   .panel-header { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: rgba(0, 0, 0, 0.2); border-bottom: 1px solid rgba(255, 255, 255, 0.06); }
   .panel-header h3 { margin: 0; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.8px; color: rgba(255, 255, 255, 0.7); }
@@ -218,20 +209,17 @@
   .flex-center { display: flex; align-items: center; justify-content: center; }
   .placeholder-text { color: rgba(255, 255, 255, 0.3); font-size: 0.85rem; font-family: monospace; }
 
-  /* Chat Monitor */
   .chat-monitor { display: flex; flex-direction: column; gap: 8px; }
   .chat-bubble { background: rgba(0, 0, 0, 0.3); border-left: 3px solid #10b981; padding: 8px 12px; border-radius: 4px; font-family: "JetBrains Mono", monospace; font-size: 0.75rem; }
   .chat-time { color: rgba(255, 255, 255, 0.3); font-size: 0.65rem; margin-right: 8px; }
   .chat-text { color: #cbd5e1; line-height: 1.4; }
 
-  /* Keywords & Tags */
   .keyword-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
   .tag { background: rgba(56, 189, 248, 0.12); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); font-size: 0.72rem; padding: 3px 8px; border-radius: 4px; font-family: monospace; }
   .memory-card { background: rgba(0, 0, 0, 0.3); border: 1px solid rgba(255, 255, 255, 0.08); padding: 10px; border-radius: 6px; }
   .mem-id { font-size: 0.7rem; color: #a855f7; font-weight: bold; font-family: monospace; display: block; margin-bottom: 4px; }
   .mem-text { margin: 0; font-size: 0.82rem; color: #cbd5e1; font-style: italic; }
 
-  /* SubSurface Controls */
   .subsurface-header { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: rgba(0, 0, 0, 0.3); border-bottom: 1px solid rgba(255, 255, 255, 0.08); }
   .title-group { display: flex; align-items: center; gap: 6px; }
   .title-group h3 { margin: 0; font-size: 0.85rem; color: #38bdf8; }
@@ -243,14 +231,12 @@
   .toggle-switch { display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 0.75rem; color: rgba(255, 255, 255, 0.7); }
   .console-bg { background: rgba(5, 8, 15, 0.8); font-family: "JetBrains Mono", monospace; }
 
-  /* Log Stream */
   .log-line { font-size: 0.75rem; margin-bottom: 6px; line-height: 1.4; }
   .log-time { color: rgba(255, 255, 255, 0.4); }
   .log-type { font-weight: bold; margin: 0 4px; }
   .log-type.ingress { color: #38bdf8; } .log-type.vector { color: #a855f7; } .log-type.inject { color: #f59e0b; } .log-type.egress { color: #10b981; } .log-type.error { color: #ef4444; }
   .log-msg { color: rgba(255, 255, 255, 0.85); }
 
-  /* Locked State & SQL Editor */
   .sql-editor { display: flex; flex-direction: column; gap: 8px; height: 100%; }
   .sql-editor textarea { flex: 1; background: rgba(0, 0, 0, 0.5); border: 1px solid rgba(255, 255, 255, 0.1); color: #38bdf8; font-family: monospace; font-size: 0.8rem; padding: 8px; border-radius: 6px; resize: none; }
   .run-btn { background: #38bdf8; color: #0b0f17; border: none; font-weight: bold; padding: 6px; border-radius: 4px; cursor: pointer; font-size: 0.75rem; align-self: flex-end; }
@@ -259,7 +245,6 @@
   .locked-state p { margin: 0; font-size: 0.85rem; color: rgba(255, 255, 255, 0.7); }
   .sub-lock { font-size: 0.75rem !important; color: rgba(255, 255, 255, 0.4) !important; margin-top: 4px !important; }
 
-  /* Modal */
   .modal-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.75); backdrop-filter: blur(8px); display: flex; align-items: center; justify-content: center; z-index: 999; }
   .glass-modal { background: rgba(20, 24, 33, 0.9); border: 1px solid rgba(239, 68, 68, 0.4); border-radius: 12px; padding: 20px; width: 360px; color: #fff; }
   .modal-header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; color: #f87171; }
