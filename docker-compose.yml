@@ -1,5 +1,4 @@
 services:
-  # --- Mimir Engine (FastAPI + Built-in Python UI) ---
   mimir-app:
     build:
       context: .
@@ -7,7 +6,6 @@ services:
     container_name: mimir_engine
     restart: unless-stopped
     ports:
-      # Exposes Mimir API & Control Panel on port 59056
       - "${ENGINE_PORT:-59056}:59056"
     environment:
       - DB_HOST=mimir-db
@@ -21,12 +19,10 @@ services:
       mimir-db:
         condition: service_healthy
     volumes:
-      # Optional: bind mount local raw DOCID text log folder
       - ./docid_storage:/app/storage
     networks:
       - mimir-network
 
-  # --- Database Node (PostgreSQL + pgvector) ---
   mimir-db:
     image: pgvector/pgvector:pg16
     container_name: mimir_postgres
@@ -36,7 +32,6 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-mimir_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mimir_secret_password}
     ports:
-      # Bound to loopback (127.0.0.1) on high non-standard port 59057 for host safety
       - "127.0.0.1:${DB_PORT:-59057}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
