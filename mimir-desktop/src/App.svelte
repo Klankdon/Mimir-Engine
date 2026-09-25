@@ -3,7 +3,6 @@
   import GeeksDashboard from './lib/GeeksDashboard.svelte';
   import IntegrationsHub from './lib/IntegrationsHub.svelte';
 
-  // Svelte 5 Rune
   let activePage = $state<'chat' | 'dashboard' | 'integrations'>('chat');
 </script>
 
@@ -14,7 +13,6 @@
   </div>
 
   <nav class="nav-links">
-    <!-- Notice onclick standard HTML attribute in Svelte 5 -->
     <button 
       class="nav-btn" 
       class:active={activePage === 'chat'} 
