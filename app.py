@@ -20,16 +20,11 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("mimir-proxy")
 
 http_client: httpx.AsyncClient = None
-
-# Global set to hold active SSE client queues for the dashboard
 log_clients = set()
 
 async def broadcast_log(level: str, message: str):
-    """Pushes live log events to all connected UI clients."""
     timestamp = datetime.now().strftime("%H:%M:%S")
     log_entry = json.dumps({"timestamp": timestamp, "level": level, "message": message})
-    
-    # Broadcast to all active dashboard tabs
     for client_queue in list(log_clients):
         await client_queue.put(log_entry)
 
@@ -37,20 +32,12 @@ async def broadcast_log(level: str, message: str):
 async def lifespan(app: FastAPI):
     global http_client
     logger.info("Starting Mimir Engine lifespan...")
-    
-    # Initialize Postgres schemas and asyncpg pool
     await init_db_and_storage()
-    
-    # Start HTTP Proxy Pool for upstream streaming
     http_client = httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0))
-
-    yield  # Server execution block
-
-    # Graceful shutdown
+    yield
     logger.info("Closing HTTP proxy pool and database connections...")
     await http_client.aclose()
     await close_db()
-
 
 app = FastAPI(
     title="Mimir Engine // Middleware Proxy",
@@ -66,12 +53,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-# --- REST API Endpoints ---
-
 @app.get("/api/logs/stream")
 async def stream_logs(request: Request):
-    """SSE Endpoint for the Geeks Dashboard to listen to."""
     client_queue = asyncio.Queue()
     log_clients.add(client_queue)
 
@@ -120,7 +103,6 @@ async def get_providers():
         rows = await conn.fetch(query)
         return [dict(row) for row in rows]
 
-
 @app.post("/api/providers")
 async def add_provider(request: Request):
     if not db.db_pool:
@@ -130,7 +112,6 @@ async def add_provider(request: Request):
     
     async with db.db_pool.acquire() as conn:
         async with conn.transaction():
-            # 1. Insert Provider
             provider_row = await conn.fetchrow("""
                 INSERT INTO upstream_providers (name, base_url, api_key, enabled)
                 VALUES ($1, $2, $3, $4)
@@ -139,7 +120,6 @@ async def add_provider(request: Request):
             
             provider_id = provider_row['id']
             
-            # 2. Insert any initially defined models
             if 'models' in data and isinstance(data['models'], list):
                 for model in data['models']:
                     await conn.execute("""
@@ -151,7 +131,6 @@ async def add_provider(request: Request):
 
     logger.info(f"Registered upstream provider: {data.get('name')} ({provider_id})")
     return {"status": "success", "id": provider_id}
-
 
 @app.delete("/api/providers/{provider_id}")
 async def delete_provider(provider_id: str):
@@ -183,7 +162,6 @@ async def test_provider_connection(provider_id: str):
     base_url = row["base_url"].rstrip("/")
     api_key = row["api_key"]
     
-    # Intelligently resolve the /models endpoint based on the saved base_url
     if base_url.endswith("/v1"):
         target_url = f"{base_url}/models"
     elif base_url.endswith("/chat/completions"):
@@ -200,37 +178,28 @@ async def test_provider_connection(provider_id: str):
         headers["Authorization"] = f"Bearer {api_key}"
         
     try:
-        # Ping the provider's /models endpoint to verify authentication and uptime
         response = await http_client.get(target_url, headers=headers, timeout=10.0)
-        
         if response.status_code == 200:
             return {"status": "success", "message": f"Successfully connected to {row['name']}!"}
         else:
             return {"status": "error", "message": f"HTTP {response.status_code}: {response.text}"}
-            
     except Exception as e:
         logger.error(f"Provider test connection failed for {row['name']}: {e}")
         return {"status": "error", "message": str(e)}
-        
-# --- OpenAI Compatible Proxy Routes ---
 
 @app.api_route("/v1/{path:path}", methods=["GET", "POST"])
 async def proxy_openai_routes(path: str, request: Request):
-    # 1. Mock the models endpoint so Agnai / SillyTavern connection tests pass
     if path == "models" and request.method == "GET":
         return JSONResponse({
             "object": "list",
             "data": [{"id": "mimir-default", "object": "model", "created": 0, "owned_by": "mimir"}]
         })
 
-    # 2. Intercept and inject vector memory for chat completions
     if path == "chat/completions" and request.method == "POST":
         payload = await request.json()
         
-        # Broadcast Ingress
         await broadcast_log("INGRESS", "Payload intercepted from chat client.")
         
-        # Extract and broadcast the active chat context
         messages = payload.get("messages", [])
         for msg in messages[-3:]:
             role = str(msg.get("role", "UNKNOWN")).upper()
@@ -238,16 +207,13 @@ async def proxy_openai_routes(path: str, request: Request):
             preview = (content[:150] + "...") if len(content) > 150 else content
             await broadcast_log("CHAT", f"[{role}] {preview}")
         
-        # Inject Memory Context via local vector RAG
         session_id = payload.get("user", "default_session")
         
-        # Broadcast Vector Activity
         await broadcast_log("VECTOR", f"Scanning pgvector for session: {session_id}")
         enriched_payload = await inject_memory_context(session_id, payload)
         
         await broadcast_log("INJECT", "Memory context woven into payload.")
         
-        # Dynamically resolve enabled upstream provider from Postgres
         target_url = None
         api_key = ""
         
@@ -260,18 +226,14 @@ async def proxy_openai_routes(path: str, request: Request):
                 """)
                 if row:
                     base_url = row["base_url"].rstrip("/")
-                    
-                    # Cleanly resolve OpenRouter/OpenAI paths without doubling /v1
                     if base_url.endswith("/chat/completions"):
                         target_url = base_url
                     elif base_url.endswith("/v1"):
                         target_url = f"{base_url}/chat/completions"
                     else:
                         target_url = f"{base_url}/v1/chat/completions"
-                        
                     api_key = row["api_key"]
 
-        # No active provider found - Hard stop to prevent unauthorized fallback traffic
         if not target_url:
             err_msg = "No enabled upstream provider configured. Please add one in the Integrations Hub."
             logger.error(err_msg)
@@ -292,7 +254,6 @@ async def proxy_openai_routes(path: str, request: Request):
 
         await broadcast_log("EGRESS", f"Forwarding payload to upstream: {target_url}")
 
-        # Stream response chunks back to client while accumulating text for memory write-back
         async def stream_generator():
             full_response_text = ""
             active_model = payload.get("model", "unknown-upstream")
@@ -301,8 +262,6 @@ async def proxy_openai_routes(path: str, request: Request):
                 async with http_client.stream("POST", target_url, json=enriched_payload, headers=headers) as response:
                     async for chunk in response.aiter_bytes():
                         yield chunk
-                        
-                        # Buffer and parse SSE text stream delta chunks safely
                         buffer += chunk.decode("utf-8", errors="ignore")
                         while "\n" in buffer:
                             line, buffer = buffer.split("\n", 1)
@@ -316,15 +275,11 @@ async def proxy_openai_routes(path: str, request: Request):
                                 except Exception:
                                     pass
 
-                # Upon successful stream completion, vectorize and write to pgvector & disk
                 if full_response_text.strip():
                     doc_id = str(uuid.uuid4())
                     text_id = f"msg_{int(datetime.now().timestamp())}"
-                    
-                    # Compute local 384-dim embedding
                     embedding = await generate_embedding(full_response_text)
                     
-                    # Persist record
                     await save_memory_chunk(
                         doc_id=doc_id,
                         parent_id=session_id,
@@ -346,9 +301,6 @@ async def proxy_openai_routes(path: str, request: Request):
         return StreamingResponse(stream_generator(), media_type="text/event-stream")
 
     return JSONResponse(status_code=404, content={"error": "Endpoint not found in Mimir Engine"})
-
-
-# --- Static Assets & Frontend SPA Fallback ---
 
 @app.get("/{full_path:path}")
 async def serve_spa(full_path: str):
