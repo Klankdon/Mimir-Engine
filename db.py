@@ -4,7 +4,6 @@ import json
 from datetime import datetime
 import asyncpg
 
-# DB Connection Config matching docker-compose env
 DB_HOST = os.getenv("DB_HOST", "mimir-db")
 DB_PORT = os.getenv("DB_PORT", "5432")
 DB_NAME = os.getenv("DB_NAME", "mimir_db")
@@ -16,15 +15,11 @@ DATABASE_URL = os.getenv(
     f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 )
 
-# Raw Text Chunk Directory on Host/Container
 STORAGE_DIR = os.path.join(os.getcwd(), "storage", "docids")
-
-# Global asyncpg Pool
 db_pool: asyncpg.Pool = None
 
 
 async def init_db_and_storage():
-    """Ensures local storage directory exists, creates async pool, and initializes Postgres schemas."""
     global db_pool
     os.makedirs(STORAGE_DIR, exist_ok=True)
 
@@ -32,10 +27,8 @@ async def init_db_and_storage():
         db_pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=10)
 
     async with db_pool.acquire() as conn:
-        # Enable pgvector extension
         await conn.execute("CREATE EXTENSION IF NOT EXISTS vector;")
 
-        # Memory Table Schema
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS memory_db (
             doc_id          VARCHAR(64) PRIMARY KEY,
@@ -55,7 +48,6 @@ async def init_db_and_storage():
         CREATE INDEX IF NOT EXISTS idx_memory_date ON memory_db(date_id);
         """)
 
-        # Upstream Provider & Model Tables
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS upstream_providers (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -89,20 +81,12 @@ async def save_memory_chunk(
     embedding: list[float], 
     metadata: dict = None
 ):
-    """
-    1. Writes raw text chunk to disk: ./storage/docids/<text_id>.txt
-    2. Writes structured record and pgvector array into Postgres asynchronously.
-    """
-    # A. Write to local raw text folder
     file_path = os.path.join(STORAGE_DIR, f"{text_id}.txt")
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(content)
 
-    # B. Insert/Update in Postgres via asyncpg pool
     async with db_pool.acquire() as conn:
         now = datetime.now()
-        
-        # Convert float array to pgvector string format '[0.1, 0.2, ...]'
         vector_str = f"[{','.join(map(str, embedding))}]"
         
         insert_query = """
@@ -123,7 +107,6 @@ async def save_memory_chunk(
 
 
 async def query_similar_memories(session_id: str, query_embedding: list[float], limit: int = 5):
-    """Queries Postgres for closest vectors matching the session asynchronously."""
     async with db_pool.acquire() as conn:
         vector_str = f"[{','.join(map(str, query_embedding))}]"
         
@@ -139,7 +122,6 @@ async def query_similar_memories(session_id: str, query_embedding: list[float], 
 
 
 async def close_db():
-    """Gracefully closes the async connection pool on app shutdown."""
     global db_pool
     if db_pool:
         await db_pool.close()
