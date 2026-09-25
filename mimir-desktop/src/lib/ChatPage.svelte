@@ -15,7 +15,7 @@
   ]);
 
   let codeOutput = $state('// Vibe code output preview will stream or render here...');
-  let scratchpadNotes = $state('// Scratchpad: Architectural notes, context rationales, and design choices...');
+  let scratchpadNotes = $state('// Architectural Scratchpad & Rationale:\n// Document the "why" behind specific code choices here (e.g., why asyncpg pooling was selected over standard psycopg2 for concurrency, or how vector cosine distance optimization works).');
 
   async function scrollToBottom() {
     await tick();
@@ -137,13 +137,13 @@
       </div>
     </div>
 
-    <!-- Bottom Pane: Scratchpad & Rationale Notes -->
+    <!-- Bottom Pane: Architectural Scratchpad & Educational Rationale -->
     <div class="stack-pane">
-      <div class="panel-header">📝 Scratchpad & Rationale</div>
+      <div class="panel-header">💡 Architectural Scratchpad & Educational Rationale</div>
       <div class="pane-content notes-pane">
         <textarea 
           bind:value={scratchpadNotes} 
-          placeholder="Record architectural decisions, why specific snippets were chosen, or context notes here..."
+          placeholder="Capture the 'why' behind implementation choices, trade-offs, and conceptual notes..."
         ></textarea>
       </div>
     </div>
