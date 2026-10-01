@@ -187,6 +187,29 @@ async def test_provider_connection(provider_id: str):
         logger.error(f"Provider test connection failed for {row['name']}: {e}")
         return {"status": "error", "message": str(e)}
 
+@app.post("/api/sql/query")
+async def execute_raw_sql(request: Request):
+    if not db.db_pool:
+        raise HTTPException(status_code=500, detail="Database pool not initialized")
+    
+    body = await request.json()
+    sql_query = body.get("query", "").strip()
+    
+    if not sql_query:
+        raise HTTPException(status_code=400, detail="Query cannot be empty")
+        
+    async with db.db_pool.acquire() as conn:
+        try:
+            if sql_query.lower().startswith("select") or sql_query.lower().startswith("with"):
+                rows = await conn.fetch(sql_query)
+                results = [dict(row) for row in rows]
+                return {"status": "success", "columns": list(results[0].keys()) if results else [], "rows": results}
+            else:
+                status_tag = await conn.execute(sql_query)
+                return {"status": "success", "message": f"Query executed successfully: {status_tag}"}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
 @app.api_route("/v1/{path:path}", methods=["GET", "POST"])
 async def proxy_openai_routes(path: str, request: Request):
     if path == "models" and request.method == "GET":

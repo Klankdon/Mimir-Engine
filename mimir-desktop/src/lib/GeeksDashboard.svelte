@@ -10,6 +10,10 @@
   let chatStream = $state<{time: string, msg: string}[]>([]);
   let eventSource: EventSource;
 
+  // SQL Runner State
+  let sqlQueryText = $state('SELECT * FROM memory_db;');
+  let sqlResultOutput = $state('// Results will appear here after execution...');
+
   onMount(() => {
     eventSource = new EventSource('/api/logs/stream');
 
@@ -52,6 +56,28 @@
   function cancelDevAccess() {
     devModeUnlocked = false;
     showWarningModal = false;
+  }
+
+  async function runSqlQuery() {
+    if (!sqlQueryText.trim()) return;
+    sqlResultOutput = '// Executing query against PostgreSQL...';
+
+    try {
+      const response = await fetch('/api/sql/query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: sqlQueryText })
+      });
+
+      const data = await response.json();
+      if (data.status === 'success') {
+        sqlResultOutput = JSON.stringify(data.rows || data.message, null, 2);
+      } else {
+        sqlResultOutput = `⚠️️ SQL Error: ${data.message}`;
+      }
+    } catch (err) {
+      sqlResultOutput = `⚠️ Network Error: Failed to reach backend query endpoint.`;
+    }
   }
 </script>
 
@@ -160,8 +186,9 @@
           </div>
         {:else}
           <div class="sql-editor">
-            <textarea placeholder="SELECT * FROM memory_db;"></textarea>
-            <button class="run-btn">Execute Query</button>
+            <textarea bind:value={sqlQueryText} placeholder="SELECT * FROM memory_db;"></textarea>
+            <button class="run-btn" onclick={runSqlQuery}>Execute Query</button>
+            <pre class="sql-output"><code>{sqlResultOutput}</code></pre>
           </div>
         {/if}
       {:else}
@@ -238,8 +265,10 @@
   .log-msg { color: rgba(255, 255, 255, 0.85); }
 
   .sql-editor { display: flex; flex-direction: column; gap: 8px; height: 100%; }
-  .sql-editor textarea { flex: 1; background: rgba(0, 0, 0, 0.5); border: 1px solid rgba(255, 255, 255, 0.1); color: #38bdf8; font-family: monospace; font-size: 0.8rem; padding: 8px; border-radius: 6px; resize: none; }
-  .run-btn { background: #38bdf8; color: #0b0f17; border: none; font-weight: bold; padding: 6px; border-radius: 4px; cursor: pointer; font-size: 0.75rem; align-self: flex-end; }
+  .sql-editor textarea { height: 70px; background: rgba(0, 0, 0, 0.5); border: 1px solid rgba(255, 255, 255, 0.1); color: #38bdf8; font-family: monospace; font-size: 0.8rem; padding: 8px; border-radius: 6px; resize: none; }
+  .run-btn { background: #38bdf8; color: #0b0f17; border: none; font-weight: bold; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 0.75rem; align-self: flex-end; }
+  .sql-output { background: rgba(0, 0, 0, 0.4); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 6px; padding: 8px; flex: 1; overflow-y: auto; color: #38bdf8; font-size: 0.75rem; margin: 0; }
+  
   .locked-state { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; text-align: center; }
   .lock-icon { font-size: 1.8rem; margin-bottom: 8px; }
   .locked-state p { margin: 0; font-size: 0.85rem; color: rgba(255, 255, 255, 0.7); }
