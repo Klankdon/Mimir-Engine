@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 import db
 from db import init_db_and_storage, close_db, save_memory_chunk
-from llm_client import inject_memory_context, generate_embedding
+from llm_client import inject_memory_context, get_embedding as generate_embedding
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("mimir-proxy")
