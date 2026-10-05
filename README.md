@@ -37,3 +37,10 @@ API Base URL: http://localhost:59056/v1
 
 API Key: sk-mimir (or leave blank if unauthenticated)
 
+### Securing the Proxy (Optional)
+If you want to restrict external frontend access to your Mimir proxy, you can enforce an API key by defining a secret in your `.env` file:
+
+```env
+MIMIR_PROXY_SECRET=your_secure_proxy_key_here
+
+When this is set, any client (such as SillyTavern or Rachel-Proxy) must provide this exact key in the Authorization Bearer header to successfully route requests through Mimir. If left blank, it defaults to open local access.
