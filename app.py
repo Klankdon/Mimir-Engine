@@ -278,48 +278,74 @@ async def proxy_openai_routes(path: str, request: Request):
         await broadcast_log("EGRESS", f"Forwarding payload to upstream: {target_url}")
 
         async def stream_generator():
+            MAX_RETRIES = 2
+            retry_count = 0
+            success = False
             full_response_text = ""
             active_model = payload.get("model", "unknown-upstream")
-            buffer = ""
-            try:
-                async with http_client.stream("POST", target_url, json=enriched_payload, headers=headers) as response:
-                    async for chunk in response.aiter_bytes():
-                        yield chunk
-                        buffer += chunk.decode("utf-8", errors="ignore")
-                        while "\n" in buffer:
-                            line, buffer = buffer.split("\n", 1)
-                            line = line.strip()
-                            if line.startswith("data: ") and line != "data: [DONE]":
-                                try:
-                                    data = json.loads(line[6:])
-                                    delta = data.get("choices", [{}])[0].get("delta", {}).get("content", "")
-                                    if delta:
-                                        full_response_text += delta
-                                except Exception:
-                                    pass
+            
+            while retry_count <= MAX_RETRIES and not success:
+                buffer = ""
+                full_response_text = ""
+                try:
+                    async with http_client.stream("POST", target_url, json=enriched_payload, headers=headers) as response:
+                        if response.status_code >= 400:
+                            error_body = await response.aread()
+                            error_str = error_body.decode("utf-8", errors="ignore")
+                            if "context_length_exceeded" in error_str or "exceeds" in error_str or response.status_code == 413:
+                                if retry_count < MAX_RETRIES and len(enriched_payload.get("messages", [])) > 2:
+                                    # Drop oldest non-system message turn to relieve context pressure
+                                    enriched_payload["messages"].pop(1)
+                                    retry_count += 1
+                                    warn_msg = f"Context size exceeded upstream. Trimming history and retrying ({retry_count}/{MAX_RETRIES})..."
+                                    logger.warning(warn_msg)
+                                    await broadcast_log("WARN", warn_msg)
+                                    await asyncio.sleep(1)
+                                    continue
+                            raise HTTPException(status_code=response.status_code, detail=error_str)
 
-                if full_response_text.strip():
-                    doc_id = str(uuid.uuid4())
-                    text_id = f"msg_{int(datetime.now().timestamp())}"
-                    embedding = await generate_embedding(full_response_text)
-                    
-                    await save_memory_chunk(
-                        doc_id=doc_id,
-                        parent_id=session_id,
-                        session_id=session_id,
-                        persona="Assistant",
-                        text_id=text_id,
-                        content=full_response_text,
-                        embedding=embedding,
-                        metadata={"source_model": active_model}
-                    )
-                    await broadcast_log("MEMORY", f"Saved memory chunk ({len(full_response_text)} chars, model: {active_model})")
+                        success = True
+                        async for chunk in response.aiter_bytes():
+                            yield chunk
+                            buffer += chunk.decode("utf-8", errors="ignore")
+                            while "\n" in buffer:
+                                line, buffer = buffer.split("\n", 1)
+                                line = line.strip()
+                                if line.startswith("data: ") and line != "data: [DONE]":
+                                    try:
+                                        data = json.loads(line[6:])
+                                        delta = data.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                                        if delta:
+                                            full_response_text += delta
+                                    except Exception:
+                                        pass
 
-            except Exception as e:
-                logger.error(f"Upstream streaming exception: {e}")
-                await broadcast_log("ERROR", f"Upstream streaming exception: {str(e)}")
-                err_payload = json.dumps({"error": str(e)}).encode("utf-8")
-                yield f"data: {err_payload}\n\n".encode("utf-8")
+                    if full_response_text.strip():
+                        doc_id = str(uuid.uuid4())
+                        text_id = f"msg_{int(datetime.now().timestamp())}"
+                        embedding = await generate_embedding(full_response_text)
+                        
+                        await save_memory_chunk(
+                            doc_id=doc_id,
+                            parent_id=session_id,
+                            session_id=session_id,
+                            persona="Assistant",
+                            text_id=text_id,
+                            content=full_response_text,
+                            embedding=embedding,
+                            metadata={"source_model": active_model}
+                        )
+                        await broadcast_log("MEMORY", f"Saved memory chunk ({len(full_response_text)} chars, model: {active_model})")
+
+                except Exception as e:
+                    if retry_count >= MAX_RETRIES or isinstance(e, HTTPException) and e.status_code < 400:
+                        logger.error(f"Upstream streaming exception: {e}")
+                        await broadcast_log("ERROR", f"Upstream streaming exception: {str(e)}")
+                        err_payload = json.dumps({"error": str(e)}).encode("utf-8")
+                        yield f"data: {err_payload}\n\n".encode("utf-8")
+                        break
+                    retry_count += 1
+                    await asyncio.sleep(1)
 
         return StreamingResponse(stream_generator(), media_type="text/event-stream")
 
