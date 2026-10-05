@@ -21,23 +21,24 @@ git clone [https://github.com/Klankdon/Mimir-Engine.git](https://github.com/Klan
 cd Mimir-Engine
 docker compose up --build -d
 
-Access the Geeks Dashboard and Integrations Hub at http://localhost:59056.  
+**### Access the Geeks Dashboard and Integrations Hub at http://localhost:59056.**  
 
-Bare Metal Installation (Windows / Linux)  
+_**Bare Metal Installation (Windows / Linux)  **_
 If running outside of Docker, ensure PostgreSQL with the pgvector extension is running locally.  
 
 Run start.bat (Windows) or ./start.sh (Mac/Linux).  
 
 The launcher will automatically build the Svelte frontend, install Python dependencies, and launch the Uvicorn server on port 59056.  
 
-Connecting Your Chat Client  
+**Connecting Your Chat Client**  
 Point your OpenAI-compatible frontend to Mimir instead of your direct LLM host:  
 
-API Base URL: http://localhost:59056/v1
+_API Base URL: http://localhost:59056/v1
 
-API Key: sk-mimir (or leave blank if unauthenticated)
+API Key: sk-mimir (or leave blank if unauthenticated)_
 
-### Securing the Proxy (Optional)
+_______________________________________________________________________________________________________________________________________________________________________
+_**### Securing the Proxy (Optional)**_
 If you want to restrict external frontend access to your Mimir proxy, you can enforce an API key by defining a secret in your `.env` file:
 
 ```env
