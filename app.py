@@ -155,7 +155,7 @@ async def delete_provider(provider_id: str):
         result = await conn.execute("DELETE FROM upstream_providers WHERE id = $1::uuid;", provider_id)
         if result == "DELETE 0":
             raise HTTPException(status_code=404, detail="Provider not found")
-            
+
     return {"status": "deleted", "id": provider_id}
 
 @app.get("/api/providers/{provider_id}/test")
