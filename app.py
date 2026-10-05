@@ -11,6 +11,9 @@ from fastapi import FastAPI, Request, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+
+security = HTTPBearer(auto_error=False)
 
 import db
 from db import init_db_and_storage, close_db, save_memory_chunk
@@ -52,6 +55,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+async def verify_proxy_key(credentials: HTTPAuthorizationCredentials = None):
+    # If no global proxy secret is enforced, pass through. 
+    # Otherwise, validate credentials.credentials against your env/db secret.
+    proxy_secret = os.getenv("MIMIR_PROXY_SECRET")
+    if proxy_secret and (not credentials or credentials.credentials != proxy_secret):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing Mimir proxy API key",
+        )
+    return credentials
 
 @app.get("/api/logs/stream")
 async def stream_logs(request: Request):
@@ -211,7 +225,7 @@ async def execute_raw_sql(request: Request):
             return {"status": "error", "message": str(e)}
 
 @app.api_route("/v1/{path:path}", methods=["GET", "POST"])
-async def proxy_openai_routes(path: str, request: Request):
+async def proxy_openai_routes(path: str, request: Request, credentials: HTTPAuthorizationCredentials = Depends(verify_proxy_key)):
     if path == "models" and request.method == "GET":
         return JSONResponse({
             "object": "list",
