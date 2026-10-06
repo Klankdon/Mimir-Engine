@@ -62,3 +62,9 @@ Thumbs.db
 docker-compose.override.yml
 .mimir_data/
 mimir-desktop/.vite/
+
+# ==========================================
+# Local HuggingFace / PyTorch Model Cache
+# ==========================================
+.cache/
+models/
