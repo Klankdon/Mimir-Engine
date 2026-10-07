@@ -235,16 +235,18 @@ async def proxy_openai_routes(path: str, request: Request, credentials: HTTPAuth
     if path == "chat/completions" and request.method == "POST":
         payload = await request.json()
         
-        await broadcast_log("INGRESS", "Payload intercepted from chat client.")
-        
         messages = payload.get("messages", [])
         for msg in messages[-3:]:
             role = str(msg.get("role", "UNKNOWN")).upper()
             content = str(msg.get("content", ""))
             preview = (content[:150] + "...") if len(content) > 150 else content
             await broadcast_log("CHAT", f"[{role}] {preview}")
-            if not payload.get("model"):
+      
+        # Fallback for frontends passing empty/null model strings
+        if not payload.get("model"):
             payload["model"] = "mimir-default"
+        
+        await broadcast_log("INGRESS", f"Payload intercepted from chat client (Model: {payload.get('model')}).")    
         
         session_id = payload.get("user", "default_session")
         
