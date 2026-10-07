@@ -194,3 +194,9 @@ async def test_provider_connection(provider_id: str):
     try:
         response = await http_client.get(target_url, headers=headers, timeout=10.0)
         if response.status_code == 200:
+            return {"status": "success", "message": f"Successfully connected to {row['name']}!"}
+        else:
+            return {"status": "error", "message": f"HTTP {response.status_code}: {response.text}"}
+    except Exception as e:
+        logger.error(f"Provider test connection failed for {row['name']}: {e}")
+        return {"status": "error", "message": str(e)}
