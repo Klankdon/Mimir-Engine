@@ -24,7 +24,7 @@
     }
   }
 
-  async function sendMessage() {
+async function sendMessage() {
     if (!inputMessage.trim() || isGenerating) return;
 
     const userText = inputMessage.trim();
@@ -36,6 +36,9 @@
     messages = [...messages, { sender: 'Mimir', text: '' }];
     const targetMessageIndex = messages.length - 1;
     isGenerating = true;
+
+    // Reset code output pane for fresh run
+    codeOutput = '';
 
     try {
       const payload = {
@@ -63,6 +66,7 @@
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
+      let rawFullText = '';
 
       while (true) {
         const { done, value } = await reader.read();
@@ -83,7 +87,16 @@
               const token = parsed.choices?.[0]?.delta?.content || parsed.choices?.[0]?.text || '';
               
               if (token) {
-                messages[targetMessageIndex].text += token;
+                rawFullText += token;
+
+                // Extract all markdown code blocks and pipe them into the code output pane
+                const codeMatches = [...rawFullText.matchAll(/```(?:\w+)?\n([\s\S]*?)(?:```|$)/g)];
+                if (codeMatches.length > 0) {
+                  codeOutput = codeMatches.map(m => m[1]).join('\n\n// --- NEXT BLOCK ---\n\n');
+                }
+
+                // Render main narrative text into the chat bubble
+                messages[targetMessageIndex].text = rawFullText;
                 await scrollToBottom();
               }
             } catch (err) {}
