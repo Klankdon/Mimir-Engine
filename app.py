@@ -243,6 +243,8 @@ async def proxy_openai_routes(path: str, request: Request, credentials: HTTPAuth
             content = str(msg.get("content", ""))
             preview = (content[:150] + "...") if len(content) > 150 else content
             await broadcast_log("CHAT", f"[{role}] {preview}")
+            if not payload.get("model"):
+            payload["model"] = "mimir-default"
         
         session_id = payload.get("user", "default_session")
         
