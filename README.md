@@ -43,7 +43,7 @@ Hey everyone,
 We just hit a massive development milestone on Mimir Engine. Thanks to some heavy lifting under the hood, we've officially ironed out the proxy routing pipeline, cleaned up database string handling, and locked in seamless multi-provider support.
 
 #### What’s New:
-1. **Dynamic Integrations Hub Mapping**: You no longer need to hardcode model strings in frontend code bundles. The proxy now inspects incoming ingress payloads and dynamically resolves the active upstream provider and model based on your assigned target role (`chat`, `vibe`, or `agent`).
+1. **Dynamic Integrations Hub Mapping**: You no longer need to hardcode model strings in frontend code bundles. The proxy now inspects incoming ingress payloads and dynamically resolves the active upstream provider and model based on your assigned target role (`chat`, `vibe`, or `agent`). *AGENT is not yet incorporated*
 2. **Expanded Database Precision**: Resolved text-buffer truncation issues across PostgreSQL and vector storage queries, ensuring long generated blocks, code scripts, and lore chunks return 100% intact.
 3. **Multi-Endpoint Compatibility**: Verified smooth, zero-latency handoffs across local Ollama instances, OpenRouter, and Google Gemini endpoints with automated context-length retry guardrails.
 
