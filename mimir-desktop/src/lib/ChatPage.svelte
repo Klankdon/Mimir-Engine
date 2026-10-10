@@ -24,7 +24,7 @@
     }
   }
 
-async function sendMessage() {
+  async function sendMessage() {
     if (!inputMessage.trim() || isGenerating) return;
 
     const userText = inputMessage.trim();
@@ -42,7 +42,7 @@ async function sendMessage() {
 
     try {
       const payload = {
-        model: 'mimir-proxy',
+        model: '',
         stream: true,
         messages: messages
           .filter(m => m.text)
@@ -84,6 +84,14 @@ async function sendMessage() {
           if (trimmed.startsWith('data: ')) {
             try {
               const parsed = JSON.parse(trimmed.slice(6));
+              
+              // Surface upstream errors inside chat bubble
+              if (parsed.error) {
+                messages[targetMessageIndex].text = `⚠️ Upstream Error: ${parsed.error}`;
+                await scrollToBottom();
+                break;
+              }
+
               const token = parsed.choices?.[0]?.delta?.content || parsed.choices?.[0]?.text || '';
               
               if (token) {
