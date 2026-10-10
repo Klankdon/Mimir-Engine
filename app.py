@@ -25,6 +25,22 @@ logger = logging.getLogger("mimir-proxy")
 http_client: httpx.AsyncClient = None
 log_clients = set()
 
+# Mimir 3-Tier Multi-Target Route Mapping
+MODEL_ROLE_MAP = {
+    # Tier 1: Primary Conversational (Agnaistic, SillyTavern, heavy narrative models)
+    "mimir-proxy": "chat",
+    "mimir-chat": "chat",
+    "mimir-default": "chat",
+    
+    # Tier 2: Interactive Vibe Workspace (ChatPage.svelte, Qwen-Coder, DeepSeek)
+    "mimir-vibe": "vibe",
+    "vibe": "vibe",
+    
+    # Tier 3: Background Agents & Telemetry Hooks (Vector extractors, HOUND, SI-NEXUS hooks)
+    "mimir-agent": "agent",
+    "agent": "agent",
+}
+
 async def broadcast_log(level: str, message: str):
     timestamp = datetime.now().strftime("%H:%M:%S")
     log_entry = json.dumps({"timestamp": timestamp, "level": level, "message": message})
@@ -104,6 +120,7 @@ async def get_providers():
                             'id', m.id::text, 
                             'modelName', m.model_name, 
                             'friendlyName', m.friendly_name,
+                            'targetRole', COALESCE(m.target_role, 'chat'),
                             'contextLength', m.context_length,
                             'isActive', m.is_active
                         )
@@ -135,12 +152,17 @@ async def add_provider(request: Request):
             
             if 'models' in data and isinstance(data['models'], list):
                 for model in data['models']:
+                    target_role = model.get('targetRole', 'chat').lower()
+                    if target_role not in ['chat', 'vibe', 'agent']:
+                        target_role = 'chat'
+
                     await conn.execute("""
-                        INSERT INTO upstream_models (provider_id, model_name, friendly_name)
-                        VALUES ($1::uuid, $2, $3)
+                        INSERT INTO upstream_models (provider_id, model_name, friendly_name, target_role)
+                        VALUES ($1::uuid, $2, $3, $4)
                         ON CONFLICT (provider_id, model_name) DO UPDATE
-                        SET friendly_name = EXCLUDED.friendly_name;
-                    """, provider_id, model.get('modelName'), model.get('friendlyName', model.get('modelName')))
+                        SET friendly_name = EXCLUDED.friendly_name,
+                            target_role = EXCLUDED.target_role;
+                    """, provider_id, model.get('modelName'), model.get('friendlyName', model.get('modelName')), target_role)
 
     logger.info(f"Registered upstream provider: {data.get('name')} ({provider_id})")
     return {"status": "success", "id": provider_id}
@@ -223,41 +245,50 @@ async def execute_raw_sql(request: Request):
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
-# Explicit route handler to stop 404s on chat completions
 @app.post("/v1/chat/completions")
 async def proxy_chat_completions(request: Request, credentials: HTTPAuthorizationCredentials = Depends(verify_proxy_key)):
     payload = await request.json()
     
-    # Fallback for frontends passing empty/null model strings
-    if not payload.get("model"):
-        payload["model"] = "mimir-default"
-        
-    await broadcast_log("INGRESS", f"Payload intercepted from chat client (Model: {payload.get('model')}).")
+    requested_model = str(payload.get("model", "")).strip().lower()
     
-    messages = payload.get("messages", [])
-    for msg in messages[-3:]:
-        role = str(msg.get("role", "UNKNOWN")).upper()
-        content = str(msg.get("content", ""))
-        preview = (content[:150] + "...") if len(content) > 150 else content
-        await broadcast_log("CHAT", f"[{role}] {preview}")
+    # Resolve target role from model keyword map, fallback to 'chat'
+    target_role = MODEL_ROLE_MAP.get(requested_model, "chat")
     
-    session_id = payload.get("user", "default_session")
-    
-    await broadcast_log("VECTOR", f"Scanning pgvector for session: {session_id}")
-    enriched_payload = await inject_memory_context(session_id, payload)
-    
-    await broadcast_log("INJECT", "Memory context woven into payload.")
+    await broadcast_log("INGRESS", f"Payload intercepted (Requested: '{requested_model}' -> Target Role: '{target_role}').")
     
     target_url = None
     api_key = ""
+    upstream_model_name = None
     
     if db.db_pool:
         async with db.db_pool.acquire() as conn:
+            # First try matching model assigned to specific target role
             row = await conn.fetchrow("""
-                SELECT base_url, api_key FROM upstream_providers 
-                WHERE enabled = true 
-                ORDER BY created_at DESC LIMIT 1;
-            """)
+                SELECT p.base_url, p.api_key, m.model_name
+                FROM upstream_models m
+                JOIN upstream_providers p ON m.provider_id = p.id
+                WHERE m.target_role = $1 AND m.is_active = true AND p.enabled = true
+                ORDER BY m.created_at DESC LIMIT 1;
+            """, target_role)
+            
+            # Fallback to default 'chat' provider if specific role is unassigned
+            if not row and target_role != "chat":
+                row = await conn.fetchrow("""
+                    SELECT p.base_url, p.api_key, m.model_name
+                    FROM upstream_models m
+                    JOIN upstream_providers p ON m.provider_id = p.id
+                    WHERE m.is_active = true AND p.enabled = true
+                    ORDER BY m.created_at DESC LIMIT 1;
+                """)
+                
+            # Ultimate fallback to any active provider if no models table entry exists
+            if not row:
+                row = await conn.fetchrow("""
+                    SELECT base_url, api_key FROM upstream_providers 
+                    WHERE enabled = true 
+                    ORDER BY created_at DESC LIMIT 1;
+                    """)
+                    
             if row:
                 base_url = row["base_url"].rstrip("/")
                 if base_url.endswith("/chat/completions"):
@@ -267,9 +298,10 @@ async def proxy_chat_completions(request: Request, credentials: HTTPAuthorizatio
                 else:
                     target_url = f"{base_url}/v1/chat/completions"
                 api_key = row["api_key"]
+                upstream_model_name = row.get("model_name")
 
     if not target_url:
-        err_msg = "No enabled upstream provider configured. Please add one in the Integrations Hub."
+        err_msg = f"No active upstream provider configured for role '{target_role}'. Please add one in Integrations Hub."
         logger.error(err_msg)
         await broadcast_log("ERROR", err_msg)
         
@@ -277,6 +309,31 @@ async def proxy_chat_completions(request: Request, credentials: HTTPAuthorizatio
             yield f'data: {json.dumps({"error": err_msg})}\n\n'.encode("utf-8")
             
         return StreamingResponse(error_generator(), media_type="text/event-stream")
+
+    # Inject active upstream model name if registered
+    if upstream_model_name:
+        payload["model"] = upstream_model_name
+
+    messages = payload.get("messages", [])
+    for msg in messages[-3:]:
+        role = str(msg.get("role", "UNKNOWN")).upper()
+        content = str(msg.get("content", ""))
+        preview = (content[:150] + "...") if len(content) > 150 else content
+        await broadcast_log("CHAT", f"[{role}] {preview}")
+    
+    session_id = payload.get("user", "default_session")
+    
+    # Remove the stray 'else:' block here and ensure the fallback assignment is clean:
+    if not payload.get("model"):
+        payload["model"] = "gpt-4o-mini" # Ultimate fallback if no model is registered
+    
+    # Memory injection for primary chat stream
+    if target_role == "chat":
+        await broadcast_log("VECTOR", f"Scanning pgvector for session: {session_id}")
+        enriched_payload = await inject_memory_context(session_id, payload)
+        await broadcast_log("INJECT", "Memory context woven into payload.")
+    else:
+        enriched_payload = payload
 
     headers = {
         "Content-Type": "application/json",
@@ -286,7 +343,7 @@ async def proxy_chat_completions(request: Request, credentials: HTTPAuthorizatio
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
-    await broadcast_log("EGRESS", f"Forwarding payload to upstream: {target_url}")
+    await broadcast_log("EGRESS", f"Forwarding payload ({target_role}) to: {target_url} [Model: {payload.get('model')}]")
 
     async def stream_generator():
         MAX_RETRIES = 2
@@ -330,7 +387,8 @@ async def proxy_chat_completions(request: Request, credentials: HTTPAuthorizatio
                                 except Exception:
                                     pass
 
-                if full_response_text.strip():
+                # Persist conversational memory chunk only for primary chat streams
+                if full_response_text.strip() and target_role == "chat":
                     doc_id = str(uuid.uuid4())
                     text_id = f"msg_{int(datetime.now().timestamp())}"
                     embedding = await generate_embedding(full_response_text)
@@ -343,12 +401,12 @@ async def proxy_chat_completions(request: Request, credentials: HTTPAuthorizatio
                         text_id=text_id,
                         content=full_response_text,
                         embedding=embedding,
-                        metadata={"source_model": active_model}
+                        metadata={"source_model": active_model, "role": target_role}
                     )
                     await broadcast_log("MEMORY", f"Saved memory chunk ({len(full_response_text)} chars, model: {active_model})")
 
             except Exception as e:
-                if retry_count >= MAX_RETRIES or isinstance(e, HTTPException) and e.status_code < 400:
+                if retry_count >= MAX_RETRIES or (isinstance(e, HTTPException) and e.status_code < 400):
                     logger.error(f"Upstream streaming exception: {e}")
                     await broadcast_log("ERROR", f"Upstream streaming exception: {str(e)}")
                     err_payload = json.dumps({"error": str(e)}).encode("utf-8")
@@ -364,7 +422,11 @@ async def proxy_openai_routes(path: str, request: Request, credentials: HTTPAuth
     if path == "models" and request.method == "GET":
         return JSONResponse({
             "object": "list",
-            "data": [{"id": "mimir-default", "object": "model", "created": 0, "owned_by": "mimir"}]
+            "data": [
+                {"id": "mimir-proxy", "object": "model", "created": 0, "owned_by": "mimir"},
+                {"id": "mimir-vibe", "object": "model", "created": 0, "owned_by": "mimir"},
+                {"id": "mimir-agent", "object": "model", "created": 0, "owned_by": "mimir"}
+            ]
         })
 
     return JSONResponse(status_code=404, content={"error": "Endpoint not found in Mimir Engine"})
@@ -377,4 +439,4 @@ async def serve_spa(full_path: str):
     return FileResponse("dist/index.html")
 
 if os.path.exists("dist"):
-    app.mount("/", StaticFiles(directory="dist", html=True), name="static")
+    app.mount("/", StaticFiles(directory="dist", html=True), name="static")        
