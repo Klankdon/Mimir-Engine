@@ -11,8 +11,11 @@
   let eventSource: EventSource;
 
   // SQL Runner State
-  let sqlQueryText = $state('SELECT * FROM memory_db;');
-  let sqlResultOutput = $state('// Results will appear here after execution...');
+  let sqlQueryText = $state('SELECT doc_id, session_id, persona, content, created_at FROM memory_db ORDER BY created_at DESC LIMIT 10;');
+  let sqlResultRows = $state<Record<string, any>[]>([]);
+  let sqlResultColumns = $state<string[]>([]);
+  let sqlStatusMessage = $state('// Results will appear here after execution...');
+  let isExecutingSql = $state(false);
 
   onMount(() => {
     eventSource = new EventSource('/api/logs/stream');
@@ -59,8 +62,11 @@
   }
 
   async function runSqlQuery() {
-    if (!sqlQueryText.trim()) return;
-    sqlResultOutput = '// Executing query against PostgreSQL...';
+    if (!sqlQueryText.trim() || isExecutingSql) return;
+    isExecutingSql = true;
+    sqlStatusMessage = 'Executing query against PostgreSQL...';
+    sqlResultRows = [];
+    sqlResultColumns = [];
 
     try {
       const response = await fetch('/api/sql/query', {
@@ -71,17 +77,26 @@
 
       const data = await response.json();
       if (data.status === 'success') {
-        sqlResultOutput = JSON.stringify(data.rows || data.message, null, 2);
+        if (data.rows && data.rows.length > 0) {
+          sqlResultColumns = data.columns || Object.keys(data.rows[0]);
+          sqlResultRows = data.rows;
+          sqlStatusMessage = `Query executed successfully. Returned ${data.rows.length} rows.`;
+        } else {
+          sqlStatusMessage = data.message || 'Query executed successfully. 0 rows returned.';
+        }
       } else {
-        sqlResultOutput = `⚠️️ SQL Error: ${data.message}`;
+        sqlStatusMessage = `⚠ SQL Error: ${data.message}`;
       }
     } catch (err) {
-      sqlResultOutput = `⚠️ Network Error: Failed to reach backend query endpoint.`;
+      sqlStatusMessage = `⚠️ Network Error: Failed to reach backend query endpoint.`;
+    } finally {
+      isExecutingSql = false;
     }
   }
 </script>
 
 <div class="dashboard-grid">
+  <!-- Left Column: Status Sidebar -->
   <div class="grid-panel sidebar-panel">
     <SidebarStatus 
       docId="doc_8f91a2b"
@@ -93,6 +108,7 @@
     />
   </div>
 
+  <!-- Top Center: Active Chat Stream -->
   <div class="grid-panel chat-panel">
     <div class="panel-header">
       <span class="dot green"></span>
@@ -113,6 +129,7 @@
     </div>
   </div>
 
+  <!-- Top Right: Keywords & Memory Links -->
   <div class="grid-panel keywords-panel">
     <div class="panel-header">
       <span class="dot cyan"></span>
@@ -131,29 +148,20 @@
     </div>
   </div>
 
-  <div class="grid-panel db-panel">
-    <div class="panel-header">
-      <span class="dot purple"></span>
-      <h3>PostgreSQL / Table Monitor</h3>
-    </div>
-    <div class="panel-content flex-center">
-      <p class="placeholder-text">Embedded Table / NocoDB Grid View Pending</p>
-    </div>
-  </div>
-
+  <!-- Bottom Span: Full-Width SubSurface Dev Console -->
   <div class="grid-panel subsurface-panel">
     <div class="subsurface-header">
       <div class="title-group">
         <span class="sub-logo">⚡</span>
-        <h3>SubSurface</h3>
-        <span class="badge">Raw Data</span>
+        <h3>SubSurface Developer Console & PostgreSQL Table Monitor</h3>
+        <span class="badge">Live Execution</span>
       </div>
 
       <div class="sub-controls">
         {#if devModeUnlocked}
           <div class="tab-group">
-            <button class="tab-btn" class:active={activeTab === 'telemetry'} onclick={() => activeTab = 'telemetry'}>Telemetry</button>
-            <button class="tab-btn" class:active={activeTab === 'postgres'} onclick={() => activeTab = 'postgres'}>SQL Tool</button>
+            <button class="tab-btn" class:active={activeTab === 'telemetry'} onclick={() => activeTab = 'telemetry'}>Telemetry Stream</button>
+            <button class="tab-btn" class:active={activeTab === 'postgres'} onclick={() => activeTab = 'postgres'}>PostgreSQL Query Grid</button>
           </div>
         {/if}
 
@@ -185,17 +193,49 @@
             {/each}
           </div>
         {:else}
-          <div class="sql-editor">
-            <textarea bind:value={sqlQueryText} placeholder="SELECT * FROM memory_db;"></textarea>
-            <button class="run-btn" onclick={runSqlQuery}>Execute Query</button>
-            <pre class="sql-output"><code>{sqlResultOutput}</code></pre>
+          <div class="sql-workspace">
+            <div class="sql-input-bar">
+              <textarea bind:value={sqlQueryText} placeholder="SELECT * FROM memory_db;"></textarea>
+              <button class="run-btn" onclick={runSqlQuery} disabled={isExecutingSql}>
+                {isExecutingSql ? 'Executing...' : 'Run Query'}
+              </button>
+            </div>
+
+            <div class="sql-status-bar">{sqlStatusMessage}</div>
+
+            <div class="sql-grid-container">
+              {#if sqlResultRows.length > 0}
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      {#each sqlResultColumns as col}
+                        <th>{col}</th>
+                      {/each}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {#each sqlResultRows as row}
+                      <tr>
+                        {#each sqlResultColumns as col}
+                          <td title={String(row[col] ?? '')}>
+                            {typeof row[col] === 'object' ? JSON.stringify(row[col]) : String(row[col] ?? '')}
+                          </td>
+                        {/each}
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
+              {:else}
+                <div class="empty-grid-notice">Execute a SELECT query above to inspect memory chunks or provider tables in real-time.</div>
+              {/if}
+            </div>
           </div>
         {/if}
       {:else}
         <div class="locked-state">
           <span class="lock-icon">🔒</span>
-          <p>SubSurface Developer Mode is Locked</p>
-          <p class="sub-lock">Enable Dev Mode to access unfiltered raw execution streams and the PostgreSQL manager.</p>
+          <p>SubSurface Developer Console & Query Grid Locked</p>
+          <p class="sub-lock">Enable Dev Mode to inspect raw telemetry streams or run SQL queries directly against pgvector.</p>
         </div>
       {/if}
     </div>
@@ -209,8 +249,8 @@
         <span class="warning-icon">⚠️</span>
         <h4>SubSurface Warning</h4>
       </div>
-      <p>Tampering with settings or executing raw commands in the <strong>SubSurface</strong> screen can break <strong>Mimir Engine</strong> unless you know what you are doing.</p>
-      <p class="sub-text">Are you sure you want to continue?</p>
+      <p>Executing raw commands in <strong>SubSurface</strong> interacts directly with the live database. Use caution when running UPDATE or DELETE queries.</p>
+      <p class="sub-text">Are you sure you want to proceed?</p>
       <div class="modal-actions">
         <button class="btn btn-confirm" onclick={confirmDevAccess}>Yes</button>
         <button class="btn btn-cancel" onclick={cancelDevAccess}>No</button>
@@ -220,20 +260,27 @@
 {/if}
 
 <style>
-  .dashboard-grid { display: grid; grid-template-columns: 270px 1fr 340px; grid-template-rows: 1fr 1fr; gap: 12px; height: 100%; width: 100%; box-sizing: border-box; }
+  .dashboard-grid { 
+    display: grid; 
+    grid-template-columns: 270px 1fr 340px; 
+    grid-template-rows: 240px 1fr; 
+    gap: 12px; 
+    height: 100%; 
+    width: 100%; 
+    box-sizing: border-box; 
+  }
+  
   .sidebar-panel { grid-column: 1; grid-row: 1 / 3; }
   .chat-panel { grid-column: 2; grid-row: 1; }
   .keywords-panel { grid-column: 3; grid-row: 1; }
-  .db-panel { grid-column: 2; grid-row: 2; }
-  .subsurface-panel { grid-column: 3; grid-row: 2; }
+  .subsurface-panel { grid-column: 2 / 4; grid-row: 2; }
 
   .grid-panel { background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
   .panel-header { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: rgba(0, 0, 0, 0.2); border-bottom: 1px solid rgba(255, 255, 255, 0.06); }
   .panel-header h3 { margin: 0; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.8px; color: rgba(255, 255, 255, 0.7); }
   .dot { width: 8px; height: 8px; border-radius: 50%; }
-  .dot.green { background: #10b981; } .dot.cyan { background: #38bdf8; } .dot.purple { background: #a855f7; }
+  .dot.green { background: #10b981; } .dot.cyan { background: #38bdf8; }
   .panel-content { flex: 1; padding: 14px; overflow-y: auto; }
-  .flex-center { display: flex; align-items: center; justify-content: center; }
   .placeholder-text { color: rgba(255, 255, 255, 0.3); font-size: 0.85rem; font-family: monospace; }
 
   .chat-monitor { display: flex; flex-direction: column; gap: 8px; }
@@ -247,16 +294,16 @@
   .mem-id { font-size: 0.7rem; color: #a855f7; font-weight: bold; font-family: monospace; display: block; margin-bottom: 4px; }
   .mem-text { margin: 0; font-size: 0.82rem; color: #cbd5e1; font-style: italic; }
 
-  .subsurface-header { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: rgba(0, 0, 0, 0.3); border-bottom: 1px solid rgba(255, 255, 255, 0.08); }
-  .title-group { display: flex; align-items: center; gap: 6px; }
+  .subsurface-header { display: flex; justify-content: space-between; align-items: center; padding: 8px 14px; background: rgba(0, 0, 0, 0.3); border-bottom: 1px solid rgba(255, 255, 255, 0.08); }
+  .title-group { display: flex; align-items: center; gap: 8px; }
   .title-group h3 { margin: 0; font-size: 0.85rem; color: #38bdf8; }
   .badge { font-size: 0.6rem; background: rgba(56, 189, 248, 0.15); color: #38bdf8; padding: 2px 6px; border-radius: 4px; }
-  .sub-controls { display: flex; align-items: center; gap: 10px; }
+  .sub-controls { display: flex; align-items: center; gap: 12px; }
   .tab-group { display: flex; gap: 4px; }
-  .tab-btn { background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); color: #94a3b8; padding: 3px 8px; border-radius: 4px; font-size: 0.7rem; cursor: pointer; }
+  .tab-btn { background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); color: #94a3b8; padding: 4px 10px; border-radius: 4px; font-size: 0.72rem; cursor: pointer; }
   .tab-btn.active { background: rgba(56, 189, 248, 0.2); border-color: #38bdf8; color: #38bdf8; }
   .toggle-switch { display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 0.75rem; color: rgba(255, 255, 255, 0.7); }
-  .console-bg { background: rgba(5, 8, 15, 0.8); font-family: "JetBrains Mono", monospace; }
+  .console-bg { background: rgba(5, 8, 15, 0.85); font-family: "JetBrains Mono", monospace; }
 
   .log-line { font-size: 0.75rem; margin-bottom: 6px; line-height: 1.4; }
   .log-time { color: rgba(255, 255, 255, 0.4); }
@@ -264,11 +311,22 @@
   .log-type.ingress { color: #38bdf8; } .log-type.vector { color: #a855f7; } .log-type.inject { color: #f59e0b; } .log-type.egress { color: #10b981; } .log-type.error { color: #ef4444; }
   .log-msg { color: rgba(255, 255, 255, 0.85); }
 
-  .sql-editor { display: flex; flex-direction: column; gap: 8px; height: 100%; }
-  .sql-editor textarea { height: 70px; background: rgba(0, 0, 0, 0.5); border: 1px solid rgba(255, 255, 255, 0.1); color: #38bdf8; font-family: monospace; font-size: 0.8rem; padding: 8px; border-radius: 6px; resize: none; }
-  .run-btn { background: #38bdf8; color: #0b0f17; border: none; font-weight: bold; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 0.75rem; align-self: flex-end; }
-  .sql-output { background: rgba(0, 0, 0, 0.4); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 6px; padding: 8px; flex: 1; overflow-y: auto; color: #38bdf8; font-size: 0.75rem; margin: 0; }
+  /* SQL Data Grid Styling */
+  .sql-workspace { display: flex; flex-direction: column; gap: 10px; height: 100%; }
+  .sql-input-bar { display: flex; gap: 10px; align-items: flex-start; }
+  .sql-input-bar textarea { flex: 1; height: 52px; background: rgba(0, 0, 0, 0.6); border: 1px solid rgba(255, 255, 255, 0.12); color: #38bdf8; font-family: inherit; font-size: 0.82rem; padding: 8px 12px; border-radius: 6px; resize: none; outline: none; }
+  .run-btn { background: #38bdf8; color: #0b0f17; border: none; font-weight: bold; padding: 10px 18px; border-radius: 6px; cursor: pointer; font-size: 0.78rem; height: 52px; }
+  .run-btn:disabled { opacity: 0.5; cursor: not-allowed; }
   
+  .sql-status-bar { font-size: 0.72rem; color: #94a3b8; background: rgba(0, 0, 0, 0.3); padding: 4px 8px; border-radius: 4px; border-left: 2px solid #38bdf8; }
+  
+  .sql-grid-container { flex: 1; overflow: auto; background: rgba(0, 0, 0, 0.4); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 6px; }
+  .data-table { width: 100%; border-collapse: collapse; font-size: 0.75rem; text-align: left; }
+  .data-table th { background: rgba(15, 23, 42, 0.9); color: #38bdf8; padding: 8px 12px; border-bottom: 1px solid rgba(255, 255, 255, 0.12); position: sticky; top: 0; z-index: 10; white-space: nowrap; }
+  .data-table td { padding: 6px 12px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); color: #cbd5e1; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .data-table tr:hover td { background: rgba(56, 189, 248, 0.05); }
+  .empty-grid-notice { padding: 2rem; text-align: center; color: rgba(255, 255, 255, 0.3); font-size: 0.8rem; }
+
   .locked-state { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; text-align: center; }
   .lock-icon { font-size: 1.8rem; margin-bottom: 8px; }
   .locked-state p { margin: 0; font-size: 0.85rem; color: rgba(255, 255, 255, 0.7); }
