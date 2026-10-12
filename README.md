@@ -14,6 +14,7 @@ Markdown
 * **Database & Vector Pipeline**: Powered by PostgreSQL container instance (`mimir_db`) utilizing the `pgvector` extension for semantic embedding searches across 384-dimensional state vectors.
 * **Integrations Hub**: Universal upstream provider registration supporting OpenAI-compatible endpoints (Ollama, LM Studio, OpenRouter, Google Gemini, and custom proxies) with dynamic active model fallback mapping.
 * **Real-Time Telemetry Stream**: Live WebSocket/SSE event broadcast console for ingress payload tracking, vector scan matching, and upstream egress metrics.
+* **Dedicated Mimir-Vibe LLM Target**: Independent model and provider routing dedicated exclusively to the Mimir-Vibe audio-reactive UI, keeping main chat and agent model contexts completely isolated.
 
 ---
 
