@@ -1,7 +1,7 @@
 {
   "name": "mimir-desktop",
   "private": true,
-  "version": "0.0.0",
+  "version": "v2.2.0-Live",
   "type": "module",
   "scripts": {
     "dev": "vite",
