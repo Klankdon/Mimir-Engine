@@ -19,6 +19,10 @@ Markdown
 
 ## Quick Start Guide
 
+pull the package: docker pull ghcr.io/klankdon/mimir-engine:latest
+
+Or
+
 1. **Clone and Configure**:
    ```bash
    git clone [https://github.com/mimir-engine/mimir-engine.git](https://github.com/mimir-engine/mimir-engine.git)
