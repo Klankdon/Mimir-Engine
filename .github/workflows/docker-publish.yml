@@ -26,5 +26,5 @@ jobs:
           context: .
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/mimir-engine:latest
-            ghcr.io/${{ github.repository_owner }}/mimir-engine:${{ github.sha }}
+            ghcr.io/klankdon/mimir-engine:latest
+            ghcr.io/klankdon/mimir-engine:${{ github.sha }}
