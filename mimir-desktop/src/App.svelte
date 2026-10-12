@@ -2,6 +2,7 @@
   import ChatPage from './lib/ChatPage.svelte';
   import GeeksDashboard from './lib/GeeksDashboard.svelte';
   import IntegrationsHub from './lib/IntegrationsHub.svelte';
+  import AgentsDashboard from '$lib/AgentsDashboard.svelte';
 
   let activePage = $state<'chat' | 'dashboard' | 'integrations'>('chat');
 </script>
