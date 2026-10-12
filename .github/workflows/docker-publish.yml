@@ -17,11 +17,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Lowercase GitHub Actor
+        id: string
+        run: |
+          echo "actor_lowercase=${GITHUB_ACTOR,,}" >> $GITHUB_OUTPUT
+
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: ${{ github.actor }}
+          username: ${{ steps.string.outputs.actor_lowercase }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push Docker image
