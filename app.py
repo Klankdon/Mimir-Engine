@@ -136,7 +136,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Mimir Engine // Middleware Proxy",
-    version="2.1.0",
+    version="2.3.0",
     lifespan=lifespan
 )
 
