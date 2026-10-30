@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from importers import scan_directives_directory
 
 security = HTTPBearer(auto_error=False)
 
@@ -91,6 +92,29 @@ async def init_system_db():
             );
         """)
         await conn.commit()
+
+    # Automatically scan /directives folder and sync agent JSON files into system.db
+    directives = scan_directives_directory("directives")
+    if directives:
+        async with await get_system_db() as conn:
+            for d in directives:
+                await conn.execute("""
+                    INSERT INTO agents (id, name, role, status, description, config)
+                    VALUES (?, ?, ?, 'idle', ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        name = excluded.name,
+                        role = excluded.role,
+                        description = excluded.description,
+                        config = excluded.config;
+                """, (
+                    d["id"],
+                    d["name"],
+                    d["role"],
+                    d["description"],
+                    json.dumps(d["config"])
+                ))
+            await conn.commit()
+        logger.info(f"Successfully synced {len(directives)} agent directives from /directives into system.db")
 
 async def broadcast_log(level: str, message: str):
     timestamp = datetime.now().strftime("%H:%M:%S")
