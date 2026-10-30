@@ -5,6 +5,7 @@ import uuid
 import logging
 import httpx
 import asyncio
+import aiosqlite
 from datetime import datetime
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException, status, Depends
@@ -22,6 +23,7 @@ from llm_client import inject_memory_context, get_embedding as generate_embeddin
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("mimir-proxy")
 
+SYSTEM_DB_PATH = os.getenv("SYSTEM_DB_PATH", os.path.join(os.getcwd(), "system.db"))
 http_client: httpx.AsyncClient = None
 log_clients = set()
 
@@ -41,6 +43,51 @@ MODEL_ROLE_MAP = {
     "agent": "agent",
 }
 
+async def get_system_db():
+    conn = await aiosqlite.connect(SYSTEM_DB_PATH)
+    conn.row_factory = aiosqlite.Row
+    return conn
+
+async def init_system_db():
+    async with await get_system_db() as conn:
+        await conn.execute("PRAGMA foreign_keys = ON;")
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS upstream_providers (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                base_url TEXT NOT NULL,
+                api_key TEXT DEFAULT '',
+                enabled INTEGER DEFAULT 1,
+                created_at TEXT DEFAULT (DATETIME('now'))
+            );
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS upstream_models (
+                id TEXT PRIMARY KEY,
+                provider_id TEXT NOT NULL,
+                model_name TEXT NOT NULL,
+                friendly_name TEXT,
+                target_role TEXT DEFAULT 'chat',
+                context_length INTEGER DEFAULT 8192,
+                is_active INTEGER DEFAULT 1,
+                created_at TEXT DEFAULT (DATETIME('now')),
+                UNIQUE(provider_id, model_name),
+                FOREIGN KEY(provider_id) REFERENCES upstream_providers(id) ON DELETE CASCADE
+            );
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS agents (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                role TEXT NOT NULL,
+                status TEXT DEFAULT 'idle',
+                description TEXT,
+                config TEXT DEFAULT '{}',
+                created_at TEXT DEFAULT (DATETIME('now'))
+            );
+        """)
+        await conn.commit()
+
 async def broadcast_log(level: str, message: str):
     timestamp = datetime.now().strftime("%H:%M:%S")
     log_entry = json.dumps({"timestamp": timestamp, "level": level, "message": message})
@@ -51,6 +98,7 @@ async def broadcast_log(level: str, message: str):
 async def lifespan(app: FastAPI):
     global http_client
     logger.info("Starting Mimir Engine lifespan...")
+    await init_system_db()
     await init_db_and_storage()
     http_client = httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0))
     yield
@@ -103,99 +151,93 @@ async def stream_logs(request: Request):
 
 @app.get("/api/providers")
 async def get_providers():
-    if not db.db_pool:
-        raise HTTPException(status_code=500, detail="Database pool not initialized")
-    
-    async with db.db_pool.acquire() as conn:
+    async with await get_system_db() as conn:
         query = """
             SELECT 
-                p.id::text,
+                p.id,
                 p.name,
-                p.base_url AS "baseUrl",
-                p.api_key AS "apiKey",
+                p.base_url AS baseUrl,
+                p.api_key AS apiKey,
                 p.enabled,
                 COALESCE(
-                    json_agg(
-                        json_build_object(
-                            'id', m.id::text, 
+                    json_group_array(
+                        json_object(
+                            'id', m.id, 
                             'modelName', m.model_name, 
                             'friendlyName', m.friendly_name,
                             'targetRole', COALESCE(m.target_role, 'chat'),
                             'contextLength', m.context_length,
                             'isActive', m.is_active
                         )
-                    ) FILTER (WHERE m.id IS NOT NULL), '[]'
+                    ), '[]'
                 ) AS models
             FROM upstream_providers p
             LEFT JOIN upstream_models m ON p.id = m.provider_id
             GROUP BY p.id;
         """
-        rows = await conn.fetch(query)
-        return [dict(row) for row in rows]
+        async with conn.execute(query) as cursor:
+            rows = await cursor.fetchall()
+            results = []
+            for row in rows:
+                item = dict(row)
+                item['models'] = json.loads(item['models']) if item['models'] else []
+                # Filter out null records from LEFT JOIN group array
+                item['models'] = [m for m in item['models'] if m.get('id') is not None]
+                results.append(item)
+            return results
 
 @app.post("/api/providers")
 async def add_provider(request: Request):
-    if not db.db_pool:
-        raise HTTPException(status_code=500, detail="Database pool not initialized")
-    
     data = await request.json()
+    provider_id = str(uuid.uuid4())
     
-    async with db.db_pool.acquire() as conn:
-        async with conn.transaction():
-            provider_row = await conn.fetchrow("""
-                INSERT INTO upstream_providers (name, base_url, api_key, enabled)
-                VALUES ($1, $2, $3, $4)
-                RETURNING id::text;
-            """, data['name'], data['baseUrl'], data.get('apiKey', ''), data.get('enabled', True))
-            
-            provider_id = provider_row['id']
-            
-            if 'models' in data and isinstance(data['models'], list):
-                for model in data['models']:
-                    target_role = model.get('targetRole', 'chat').lower()
-                    if target_role not in ['chat', 'vibe', 'agent']:
-                        target_role = 'chat'
+    async with await get_system_db() as conn:
+        await conn.execute("""
+            INSERT INTO upstream_providers (id, name, base_url, api_key, enabled)
+            VALUES (?, ?, ?, ?, ?)
+        """, (provider_id, data['name'], data['baseUrl'], data.get('apiKey', ''), 1 if data.get('enabled', True) else 0))
+        
+        if 'models' in data and isinstance(data['models'], list):
+            for model in data['models']:
+                model_id = str(uuid.uuid4())
+                target_role = model.get('targetRole', 'chat').lower()
+                if target_role not in ['chat', 'vibe', 'agent']:
+                    target_role = 'chat'
 
-                    await conn.execute("""
-                        INSERT INTO upstream_models (provider_id, model_name, friendly_name, target_role)
-                        VALUES ($1::uuid, $2, $3, $4)
-                        ON CONFLICT (provider_id, model_name) DO UPDATE
-                        SET friendly_name = EXCLUDED.friendly_name,
-                            target_role = EXCLUDED.target_role;
-                    """, provider_id, model.get('modelName'), model.get('friendlyName', model.get('modelName')), target_role)
+                await conn.execute("""
+                    INSERT INTO upstream_models (id, provider_id, model_name, friendly_name, target_role)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(provider_id, model_name) DO UPDATE SET
+                        friendly_name = excluded.friendly_name,
+                        target_role = excluded.target_role;
+                """, (model_id, provider_id, model.get('modelName'), model.get('friendlyName', model.get('modelName')), target_role))
+
+        await conn.commit()
 
     logger.info(f"Registered upstream provider: {data.get('name')} ({provider_id})")
     return {"status": "success", "id": provider_id}
 
 @app.delete("/api/providers/{provider_id}")
 async def delete_provider(provider_id: str):
-    if not db.db_pool:
-        raise HTTPException(status_code=500, detail="Database pool not initialized")
-        
-    async with db.db_pool.acquire() as conn:
-        result = await conn.execute("DELETE FROM upstream_providers WHERE id = $1::uuid;", provider_id)
-        if result == "DELETE 0":
+    async with await get_system_db() as conn:
+        cursor = await conn.execute("DELETE FROM upstream_providers WHERE id = ?;", (provider_id,))
+        await conn.commit()
+        if cursor.rowcount == 0:
             raise HTTPException(status_code=404, detail="Provider not found")
 
     return {"status": "deleted", "id": provider_id}
 
 @app.get("/api/providers/{provider_id}/test")
 async def test_provider_connection(provider_id: str):
-    if not db.db_pool:
-        raise HTTPException(status_code=500, detail="Database pool not initialized")
-        
-    async with db.db_pool.acquire() as conn:
-        row = await conn.fetchrow("""
-            SELECT name, base_url, api_key 
-            FROM upstream_providers 
-            WHERE id = $1::uuid;
-        """, provider_id)
-        
-        if not row:
-            raise HTTPException(status_code=404, detail="Provider not found")
+    async with await get_system_db() as conn:
+        async with conn.execute("SELECT name, base_url, api_key FROM upstream_providers WHERE id = ?;", (provider_id,)) as cursor:
+            row = await cursor.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Provider not found")
+            row_dict = dict(row)
             
-    base_url = row["base_url"].rstrip("/")
-    api_key = row["api_key"]
+    base_url = row_dict["base_url"].rstrip("/")
+    api_key = row_dict["api_key"]
     
     if base_url.endswith("/v1"):
         target_url = f"{base_url}/models"
@@ -215,17 +257,50 @@ async def test_provider_connection(provider_id: str):
     try:
         response = await http_client.get(target_url, headers=headers, timeout=10.0)
         if response.status_code == 200:
-            return {"status": "success", "message": f"Successfully connected to {row['name']}!"}
+            return {"status": "success", "message": f"Successfully connected to {row_dict['name']}!"}
         else:
             return {"status": "error", "message": f"HTTP {response.status_code}: {response.text}"}
     except Exception as e:
-        logger.error(f"Provider test connection failed for {row['name']}: {e}")
+        logger.error(f"Provider test connection failed for {row_dict['name']}: {e}")
         return {"status": "error", "message": str(e)}
+
+@app.get("/api/agents")
+async def get_agents():
+    async with await get_system_db() as conn:
+        async with conn.execute("SELECT * FROM agents ORDER BY created_at DESC;") as cursor:
+            rows = await cursor.fetchall()
+            results = []
+            for row in rows:
+                item = dict(row)
+                item['config'] = json.loads(item['config']) if item['config'] else {}
+                results.append(item)
+            return results
+
+@app.post("/api/agents")
+async def create_agent(request: Request):
+    data = await request.json()
+    agent_id = str(uuid.uuid4())
+    
+    async with await get_system_db() as conn:
+        await conn.execute("""
+            INSERT INTO agents (id, name, role, status, description, config)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (
+            agent_id,
+            data.get('name'),
+            data.get('role', 'janitor'),
+            data.get('status', 'idle'),
+            data.get('description', ''),
+            json.dumps(data.get('config', {}))
+        ))
+        await conn.commit()
+        
+    return {"status": "success", "id": agent_id}
 
 @app.post("/api/sql/query")
 async def execute_raw_sql(request: Request):
     if not db.db_pool:
-        raise HTTPException(status_code=500, detail="Database pool not initialized")
+        raise HTTPException(status_code=500, detail="pgvector PostgreSQL pool not initialized")
     
     body = await request.json()
     sql_query = body.get("query", "").strip()
@@ -260,45 +335,48 @@ async def proxy_chat_completions(request: Request, credentials: HTTPAuthorizatio
     api_key = ""
     upstream_model_name = None
     
-    if db.db_pool:
-        async with db.db_pool.acquire() as conn:
-            # First try matching model assigned to specific target role
-            row = await conn.fetchrow("""
+    async with await get_system_db() as conn:
+        # First try matching model assigned to specific target role
+        async with conn.execute("""
+            SELECT p.base_url, p.api_key, m.model_name
+            FROM upstream_models m
+            JOIN upstream_providers p ON m.provider_id = p.id
+            WHERE m.target_role = ? AND m.is_active = 1 AND p.enabled = 1
+            ORDER BY m.created_at DESC LIMIT 1;
+        """, (target_role,)) as cursor:
+            row = await cursor.fetchone()
+            
+        # Fallback to default 'chat' provider if specific role is unassigned
+        if not row and target_role != "chat":
+            async with conn.execute("""
                 SELECT p.base_url, p.api_key, m.model_name
                 FROM upstream_models m
                 JOIN upstream_providers p ON m.provider_id = p.id
-                WHERE m.target_role = $1 AND m.is_active = true AND p.enabled = true
+                WHERE m.is_active = 1 AND p.enabled = 1
                 ORDER BY m.created_at DESC LIMIT 1;
-            """, target_role)
-            
-            # Fallback to default 'chat' provider if specific role is unassigned
-            if not row and target_role != "chat":
-                row = await conn.fetchrow("""
-                    SELECT p.base_url, p.api_key, m.model_name
-                    FROM upstream_models m
-                    JOIN upstream_providers p ON m.provider_id = p.id
-                    WHERE m.is_active = true AND p.enabled = true
-                    ORDER BY m.created_at DESC LIMIT 1;
-                """)
+            """) as cursor:
+                row = await cursor.fetchone()
                 
-            # Ultimate fallback to any active provider if no models table entry exists
-            if not row:
-                row = await conn.fetchrow("""
-                    SELECT base_url, api_key FROM upstream_providers 
-                    WHERE enabled = true 
-                    ORDER BY created_at DESC LIMIT 1;
-                    """)
-                    
-            if row:
-                base_url = row["base_url"].rstrip("/")
-                if base_url.endswith("/chat/completions"):
-                    target_url = base_url
-                elif base_url.endswith("/v1"):
-                    target_url = f"{base_url}/chat/completions"
-                else:
-                    target_url = f"{base_url}/v1/chat/completions"
-                api_key = row["api_key"]
-                upstream_model_name = row.get("model_name")
+        # Ultimate fallback to any active provider if no models table entry exists
+        if not row:
+            async with conn.execute("""
+                SELECT base_url, api_key FROM upstream_providers 
+                WHERE enabled = 1 
+                ORDER BY created_at DESC LIMIT 1;
+            """) as cursor:
+                row = await cursor.fetchone()
+                
+        if row:
+            row_dict = dict(row)
+            base_url = row_dict["base_url"].rstrip("/")
+            if base_url.endswith("/chat/completions"):
+                target_url = base_url
+            elif base_url.endswith("/v1"):
+                target_url = f"{base_url}/chat/completions"
+            else:
+                target_url = f"{base_url}/v1/chat/completions"
+            api_key = row_dict["api_key"]
+            upstream_model_name = row_dict.get("model_name")
 
     if not target_url:
         err_msg = f"No active upstream provider configured for role '{target_role}'. Please add one in Integrations Hub."
@@ -323,11 +401,10 @@ async def proxy_chat_completions(request: Request, credentials: HTTPAuthorizatio
     
     session_id = payload.get("user", "default_session")
     
-    # Remove the stray 'else:' block here and ensure the fallback assignment is clean:
     if not payload.get("model"):
-        payload["model"] = "gpt-4o-mini" # Ultimate fallback if no model is registered
+        payload["model"] = "gpt-4o-mini"
     
-    # Memory injection for primary chat stream
+    # Memory injection for primary chat stream via PostgreSQL pgvector
     if target_role == "chat":
         await broadcast_log("VECTOR", f"Scanning pgvector for session: {session_id}")
         enriched_payload = await inject_memory_context(session_id, payload)
@@ -387,7 +464,7 @@ async def proxy_chat_completions(request: Request, credentials: HTTPAuthorizatio
                                 except Exception:
                                     pass
 
-                # Persist conversational memory chunk only for primary chat streams
+                # Persist conversational memory chunk to PostgreSQL pgvector
                 if full_response_text.strip() and target_role == "chat":
                     doc_id = str(uuid.uuid4())
                     text_id = f"msg_{int(datetime.now().timestamp())}"
@@ -439,4 +516,4 @@ async def serve_spa(full_path: str):
     return FileResponse("dist/index.html")
 
 if os.path.exists("dist"):
-    app.mount("/", StaticFiles(directory="dist", html=True), name="static")        
+    app.mount("/", StaticFiles(directory="dist", html=True), name="static")
