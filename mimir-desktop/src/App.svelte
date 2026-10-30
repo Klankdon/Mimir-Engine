@@ -4,7 +4,7 @@
   import IntegrationsHub from './lib/IntegrationsHub.svelte';
   import AgentsDashboard from '$lib/AgentsDashboard.svelte';
 
-  let activePage = $state<'chat' | 'dashboard' | 'integrations'>('chat');
+  let activePage = $state<'chat' | 'dashboard' | 'integrations' | 'agents'>('chat');
 </script>
 
 <header class="app-header">
@@ -37,17 +37,31 @@
     >
       🔌 Integrations Hub
     </button>
+
+    <button 
+      class="nav-btn" 
+      class:active={activePage === 'agents'} 
+      onclick={() => activePage = 'agents'}
+    >
+      🤖 Agents
+    </button>
   </nav>
 </header>
 
 <main class="viewport-container">
-  {#if activePage === 'chat'}
+  <!-- CSS hiding keeps component states active in memory during tab navigation -->
+  <div class="view-pane" class:hidden={activePage !== 'chat'}>
     <ChatPage />
-  {:else if activePage === 'dashboard'}
+  </div>
+  <div class="view-pane" class:hidden={activePage !== 'dashboard'}>
     <GeeksDashboard />
-  {:else if activePage === 'integrations'}
+  </div>
+  <div class="view-pane" class:hidden={activePage !== 'integrations'}>
     <IntegrationsHub />
-  {/if}
+  </div>
+  <div class="view-pane" class:hidden={activePage !== 'agents'}>
+    <AgentsDashboard />
+  </div>
 </main>
 
 <style>
@@ -123,5 +137,15 @@
     width: 100vw;
     box-sizing: border-box;
     padding: 12px;
+    position: relative;
+  }
+
+  .view-pane {
+    height: 100%;
+    width: 100%;
+  }
+
+  .view-pane.hidden {
+    display: none;
   }
 </style>
