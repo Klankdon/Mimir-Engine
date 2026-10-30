@@ -29,16 +29,11 @@ log_clients = set()
 
 # Mimir 3-Tier Multi-Target Route Mapping
 MODEL_ROLE_MAP = {
-    # Tier 1: Primary Conversational (Agnaistic, SillyTavern, heavy narrative models)
     "mimir-proxy": "chat",
     "mimir-chat": "chat",
     "mimir-default": "chat",
-    
-    # Tier 2: Interactive Vibe Workspace (ChatPage.svelte, Qwen-Coder, DeepSeek)
     "mimir-vibe": "vibe",
     "vibe": "vibe",
-    
-    # Tier 3: Background Agents & Telemetry Hooks (Vector extractors, HOUND, SI-NEXUS hooks)
     "mimir-agent": "agent",
     "agent": "agent",
 }
@@ -86,6 +81,15 @@ async def init_system_db():
                 created_at TEXT DEFAULT (DATETIME('now'))
             );
         """)
+        # Workspace Persistence Table to prevent tab-switching state loss
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS workspace_sessions (
+                session_key TEXT PRIMARY KEY,
+                tab_name TEXT NOT NULL,
+                state_data TEXT DEFAULT '{}',
+                updated_at TEXT DEFAULT (DATETIME('now'))
+            );
+        """)
         await conn.commit()
 
 async def broadcast_log(level: str, message: str):
@@ -108,7 +112,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Mimir Engine // Middleware Proxy",
-    version="2.0.0",
+    version="2.1.0",
     lifespan=lifespan
 )
 
@@ -149,6 +153,38 @@ async def stream_logs(request: Request):
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
+# --- Workspace State Persistence Endpoints (Stops Tab-Switching Data Loss) ---
+
+@app.get("/api/workspace/{session_key}")
+async def get_workspace_state(session_key: str):
+    async with await get_system_db() as conn:
+        async with conn.execute("SELECT state_data FROM workspace_sessions WHERE session_key = ?;", (session_key,)) as cursor:
+            row = await cursor.fetchone()
+            if not row:
+                return {"session_key": session_key, "state": {}}
+            return {"session_key": session_key, "state": json.loads(row["state_data"])}
+
+@app.post("/api/workspace/{session_key}")
+async def save_workspace_state(session_key: str, request: Request):
+    body = await request.json()
+    tab_name = body.get("tabName", "vibe")
+    state_payload = json.dumps(body.get("state", {}))
+    
+    async with await get_system_db() as conn:
+        await conn.execute("""
+            INSERT INTO workspace_sessions (session_key, tab_name, state_data, updated_at)
+            VALUES (?, ?, ?, DATETIME('now'))
+            ON CONFLICT(session_key) DO UPDATE SET
+                tab_name = excluded.tab_name,
+                state_data = excluded.state_data,
+                updated_at = DATETIME('now');
+        """, (session_key, tab_name, state_payload))
+        await conn.commit()
+        
+    return {"status": "success", "session_key": session_key}
+
+# --- Providers Endpoints ---
+
 @app.get("/api/providers")
 async def get_providers():
     async with await get_system_db() as conn:
@@ -181,7 +217,6 @@ async def get_providers():
             for row in rows:
                 item = dict(row)
                 item['models'] = json.loads(item['models']) if item['models'] else []
-                # Filter out null records from LEFT JOIN group array
                 item['models'] = [m for m in item['models'] if m.get('id') is not None]
                 results.append(item)
             return results
@@ -323,10 +358,7 @@ async def execute_raw_sql(request: Request):
 @app.post("/v1/chat/completions")
 async def proxy_chat_completions(request: Request, credentials: HTTPAuthorizationCredentials = Depends(verify_proxy_key)):
     payload = await request.json()
-    
     requested_model = str(payload.get("model", "")).strip().lower()
-    
-    # Resolve target role from model keyword map, fallback to 'chat'
     target_role = MODEL_ROLE_MAP.get(requested_model, "chat")
     
     await broadcast_log("INGRESS", f"Payload intercepted (Requested: '{requested_model}' -> Target Role: '{target_role}').")
@@ -336,7 +368,6 @@ async def proxy_chat_completions(request: Request, credentials: HTTPAuthorizatio
     upstream_model_name = None
     
     async with await get_system_db() as conn:
-        # First try matching model assigned to specific target role
         async with conn.execute("""
             SELECT p.base_url, p.api_key, m.model_name
             FROM upstream_models m
@@ -346,7 +377,6 @@ async def proxy_chat_completions(request: Request, credentials: HTTPAuthorizatio
         """, (target_role,)) as cursor:
             row = await cursor.fetchone()
             
-        # Fallback to default 'chat' provider if specific role is unassigned
         if not row and target_role != "chat":
             async with conn.execute("""
                 SELECT p.base_url, p.api_key, m.model_name
@@ -357,7 +387,6 @@ async def proxy_chat_completions(request: Request, credentials: HTTPAuthorizatio
             """) as cursor:
                 row = await cursor.fetchone()
                 
-        # Ultimate fallback to any active provider if no models table entry exists
         if not row:
             async with conn.execute("""
                 SELECT base_url, api_key FROM upstream_providers 
@@ -388,23 +417,13 @@ async def proxy_chat_completions(request: Request, credentials: HTTPAuthorizatio
             
         return StreamingResponse(error_generator(), media_type="text/event-stream")
 
-    # Inject active upstream model name if registered
     if upstream_model_name:
         payload["model"] = upstream_model_name
 
-    messages = payload.get("messages", [])
-    for msg in messages[-3:]:
-        role = str(msg.get("role", "UNKNOWN")).upper()
-        content = str(msg.get("content", ""))
-        preview = (content[:150] + "...") if len(content) > 150 else content
-        await broadcast_log("CHAT", f"[{role}] {preview}")
-    
     session_id = payload.get("user", "default_session")
-    
     if not payload.get("model"):
         payload["model"] = "gpt-4o-mini"
     
-    # Memory injection for primary chat stream via PostgreSQL pgvector
     if target_role == "chat":
         await broadcast_log("VECTOR", f"Scanning pgvector for session: {session_id}")
         enriched_payload = await inject_memory_context(session_id, payload)
@@ -419,8 +438,6 @@ async def proxy_chat_completions(request: Request, credentials: HTTPAuthorizatio
     }
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
-
-    await broadcast_log("EGRESS", f"Forwarding payload ({target_role}) to: {target_url} [Model: {payload.get('model')}]")
 
     async def stream_generator():
         MAX_RETRIES = 2
@@ -441,10 +458,6 @@ async def proxy_chat_completions(request: Request, credentials: HTTPAuthorizatio
                             if retry_count < MAX_RETRIES and len(enriched_payload.get("messages", [])) > 2:
                                 enriched_payload["messages"].pop(1)
                                 retry_count += 1
-                                warn_msg = f"Context size exceeded upstream. Trimming history and retrying ({retry_count}/{MAX_RETRIES})..."
-                                logger.warning(warn_msg)
-                                await broadcast_log("WARN", warn_msg)
-                                await asyncio.sleep(1)
                                 continue
                         raise HTTPException(status_code=response.status_code, detail=error_str)
 
@@ -464,7 +477,6 @@ async def proxy_chat_completions(request: Request, credentials: HTTPAuthorizatio
                                 except Exception:
                                     pass
 
-                # Persist conversational memory chunk to PostgreSQL pgvector
                 if full_response_text.strip() and target_role == "chat":
                     doc_id = str(uuid.uuid4())
                     text_id = f"msg_{int(datetime.now().timestamp())}"
@@ -480,14 +492,8 @@ async def proxy_chat_completions(request: Request, credentials: HTTPAuthorizatio
                         embedding=embedding,
                         metadata={"source_model": active_model, "role": target_role}
                     )
-                    await broadcast_log("MEMORY", f"Saved memory chunk ({len(full_response_text)} chars, model: {active_model})")
-
             except Exception as e:
                 if retry_count >= MAX_RETRIES or (isinstance(e, HTTPException) and e.status_code < 400):
-                    logger.error(f"Upstream streaming exception: {e}")
-                    await broadcast_log("ERROR", f"Upstream streaming exception: {str(e)}")
-                    err_payload = json.dumps({"error": str(e)}).encode("utf-8")
-                    yield f"data: {err_payload}\n\n".encode("utf-8")
                     break
                 retry_count += 1
                 await asyncio.sleep(1)
