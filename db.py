@@ -27,7 +27,7 @@ db_pool: Optional[asyncpg.Pool] = None
 async def init_db_and_storage():
     """
     Initializes storage directory, creates connection pool, 
-    and sets up database schema + migrations on app startup.
+    and sets up database schema + pgvector extensions on app startup.
     """
     global db_pool
     
@@ -49,7 +49,7 @@ async def init_db_and_storage():
         # 1. Enable vector extension for pgvector
         await conn.execute("CREATE EXTENSION IF NOT EXISTS vector;")
 
-        # 2. Vector memory table & indexes
+        # 2. Vector memory table & indexes (Strictly Memory-Focused)
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS memory_db (
                 doc_id          VARCHAR(64) PRIMARY KEY,
@@ -68,71 +68,7 @@ async def init_db_and_storage():
             CREATE INDEX IF NOT EXISTS idx_memory_parent ON memory_db(parent_id);
             CREATE INDEX IF NOT EXISTS idx_memory_date ON memory_db(date_id);
         """)
-
-        # 3. Upstream providers & target_role multi-model router tables
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS upstream_providers (
-                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                name VARCHAR(255) NOT NULL,
-                base_url VARCHAR(512) NOT NULL,
-                api_key TEXT DEFAULT '',
-                enabled BOOLEAN DEFAULT true,
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS upstream_models (
-                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                provider_id UUID NOT NULL REFERENCES upstream_providers(id) ON DELETE CASCADE,
-                model_name VARCHAR(255) NOT NULL,
-                friendly_name VARCHAR(255),
-                target_role VARCHAR(32) DEFAULT 'chat',
-                context_length INT DEFAULT 8192,
-                is_active BOOLEAN DEFAULT true,
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(provider_id, model_name)
-            );
-
-            ALTER TABLE upstream_models 
-            ADD COLUMN IF NOT EXISTS target_role VARCHAR(32) DEFAULT 'chat';
-
-            CREATE INDEX IF NOT EXISTS idx_upstream_models_role 
-            ON upstream_models(target_role) 
-            WHERE is_active = true;
-        """)
-        logger.info("Database schema and target_role indexes verified.")
-
-
-async def get_upstream_by_role(role: str = "chat"):
-    """
-    Fetches active upstream provider configuration and model parameters 
-    matching target_role ('chat', 'vibe', 'agent').
-    Falls back to 'chat' role if requested target is unassigned.
-    """
-    if not db_pool:
-        return None
-
-    query = """
-        SELECT 
-            m.model_name,
-            m.context_length,
-            m.target_role,
-            p.base_url,
-            p.api_key
-        FROM upstream_models m
-        JOIN upstream_providers p ON m.provider_id = p.id
-        WHERE m.target_role = $1 
-          AND m.is_active = true 
-          AND p.enabled = true
-        ORDER BY m.created_at DESC
-        LIMIT 1;
-    """
-    async with db_pool.acquire() as conn:
-        record = await conn.fetchrow(query, role)
-        
-        if not record and role != "chat":
-            record = await conn.fetchrow(query, "chat")
-            
-        return dict(record) if record else None
+        logger.info("PostgreSQL vector memory schema and indexes verified.")
 
 
 async def save_memory_chunk(
