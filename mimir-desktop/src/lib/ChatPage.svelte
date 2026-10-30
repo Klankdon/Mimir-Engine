@@ -1,9 +1,16 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { tick, onMount } from 'svelte';
 
   interface ChatMessage {
     sender: 'Mimir' | 'User';
     text: string;
+  }
+
+  interface AvailableModel {
+    id: string;
+    modelName: string;
+    friendlyName: string;
+    targetRole: string;
   }
 
   let inputMessage = $state('');
@@ -16,6 +23,40 @@
 
   let codeOutput = $state('// Vibe code output preview will stream or render here...');
   let scratchpadNotes = $state('// Architectural Scratchpad & Rationale:\n// Document the "why" behind specific code choices here (e.g., why asyncpg pooling was selected over standard psycopg2 for concurrency, or how vector cosine distance optimization works).');
+
+  // Dynamic model integration state
+  let availableModels = $state<AvailableModel[]>([]);
+  let selectedModel = $state('');
+
+  onMount(async () => {
+    try {
+      const res = await fetch('/api/providers');
+      if (res.ok) {
+        const providers = await res.json();
+        let extracted: AvailableModel[] = [];
+        for (const p of providers) {
+          if (p.enabled && p.models) {
+            for (const m of p.models) {
+              extracted.push({
+                id: m.id || m.modelName,
+                modelName: m.modelName,
+                friendlyName: m.friendlyName || m.modelName,
+                targetRole: m.targetRole || 'chat'
+              });
+            }
+          }
+        }
+        availableModels = extracted;
+        if (extracted.length > 0) {
+          // Default to the first available model or preferred vibe role
+          const vibeModel = extracted.find(m => m.targetRole === 'vibe') || extracted[0];
+          selectedModel = vibeModel.modelName;
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load upstream models for Vibe deck:', err);
+    }
+  });
 
   async function scrollToBottom() {
     await tick();
@@ -42,7 +83,7 @@
 
     try {
       const payload = {
-        model: '',
+        model: selectedModel || '',
         stream: true,
         messages: messages
           .filter(m => m.text)
@@ -85,7 +126,6 @@
             try {
               const parsed = JSON.parse(trimmed.slice(6));
               
-              // Surface upstream errors inside chat bubble
               if (parsed.error) {
                 messages[targetMessageIndex].text = `⚠️ Upstream Error: ${parsed.error}`;
                 await scrollToBottom();
@@ -97,13 +137,11 @@
               if (token) {
                 rawFullText += token;
 
-                // Extract all markdown code blocks and pipe them into the code output pane
                 const codeMatches = [...rawFullText.matchAll(/```(?:\w+)?\n([\s\S]*?)(?:```|$)/g)];
                 if (codeMatches.length > 0) {
                   codeOutput = codeMatches.map(m => m[1]).join('\n\n// --- NEXT BLOCK ---\n\n');
                 }
 
-                // Render main narrative text into the chat bubble
                 messages[targetMessageIndex].text = rawFullText;
                 await scrollToBottom();
               }
@@ -124,7 +162,24 @@
 <div class="workspace-grid">
   <!-- Left Side: Chat Interface -->
   <div class="chat-container">
-    <div class="panel-header">💬 Chat Workspace</div>
+    <div class="panel-header chat-header-row">
+      <span>💬 Chat Workspace</span>
+      <div class="model-selector-wrapper">
+        <label for="vibe-model-select" class="selector-label">Model:</label>
+        <select id="vibe-model-select" bind:value={selectedModel} class="model-select-dropdown">
+          {#if availableModels.length === 0}
+            <option value="">Default (No models loaded)</option>
+          {:else}
+            {#each availableModels as m}
+              <option value={m.modelName}>
+                {m.friendlyName} ({m.targetRole})
+              </option>
+            {/each}
+          {/if}
+        </select>
+      </div>
+    </div>
+    
     <div class="chat-history" bind:this={chatHistoryContainer}>
       {#each messages as msg}
         <div class="chat-bubble {msg.sender.toLowerCase()}">
@@ -188,6 +243,35 @@
     letter-spacing: 0.5px;
     color: #38bdf8;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .chat-header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .model-selector-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .selector-label {
+    font-size: 0.75rem;
+    color: rgba(255, 255, 255, 0.6);
+  }
+
+  .model-select-dropdown {
+    background: rgba(0, 0, 0, 0.5);
+    border: 1px solid rgba(56, 189, 248, 0.3);
+    color: #38bdf8;
+    font-size: 0.78rem;
+    font-weight: bold;
+    padding: 3px 8px;
+    border-radius: 4px;
+    outline: none;
+    cursor: pointer;
   }
 
   .chat-container {
