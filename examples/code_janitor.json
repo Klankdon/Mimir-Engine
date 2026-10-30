@@ -1,0 +1,16 @@
+{
+  "name": "Nightly Code Consolidation Janitor",
+  "role": "janitor",
+  "description": "Scans workspace diffs, removes duplicate app.py variants, and keeps base + latest release.",
+  "target_paths": ["/app/workspace", "app.py"],
+  "rules": [
+    "Deduplicate intermediate code drafts generated during vibe session.",
+    "Preserve original app.py base file as app.py.bak.",
+    "Consolidate multiple API provider endpoints into system_db.py."
+  ],
+  "config": {
+    "preserve_base": true,
+    "max_versions_retained": 2,
+    "dry_run": false
+  }
+}
