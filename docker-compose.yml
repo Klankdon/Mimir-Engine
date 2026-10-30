@@ -8,6 +8,7 @@ services:
     ports:
       - "${ENGINE_PORT:-59056}:59056"
     environment:
+      - SYSTEM_DB_PATH=/app/system.db
       - DB_HOST=mimir-db
       - DB_PORT=5432
       - DB_NAME=${POSTGRES_DB:-mimir_db}
@@ -20,6 +21,7 @@ services:
         condition: service_healthy
     volumes:
       - ./docid_storage:/app/storage
+      - ./system.db:/app/system.db  # Persists the SQLite control plane locally
     networks:
       - mimir-network
 
