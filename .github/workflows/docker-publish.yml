@@ -36,5 +36,4 @@ jobs:
           push: true
           tags: |
             ghcr.io/klankdon/mimir-engine:latest
-            ghcr.io/klankdon/mimir-engine:${{ github.sha }}
-            retention-days: 3   # Reduces retention from 90 days to 3 days
+            ghcr.io/klankdon/mimir-engine:${{ github.sha }}           
