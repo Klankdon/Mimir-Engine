@@ -178,3 +178,8 @@
 							Deploy Agent
 						</button>
 					</div>
+				</form>
+			</div>
+		</div>
+	{/if}
+</div>
