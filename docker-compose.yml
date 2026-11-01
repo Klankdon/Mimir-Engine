@@ -22,6 +22,7 @@ services:
     volumes:
       - ./docid_storage:/app/storage
       - ./system.db:/app/system.db  # Persists the SQLite control plane locally
+      - ./mimir_data:/app/data
     networks:
       - mimir-network
 
