@@ -39,7 +39,7 @@ MODEL_ROLE_MAP = {
     "agent": "agent",
 }
 
-async def get_system_db():
+async def get_system_db() -> aiosqlite.Connection:
     conn = await aiosqlite.connect(SYSTEM_DB_PATH)
     conn.row_factory = aiosqlite.Row
     return conn
