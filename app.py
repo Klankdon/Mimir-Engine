@@ -28,7 +28,7 @@ SYSTEM_DB_PATH = os.getenv("SYSTEM_DB_PATH", os.path.join(os.getcwd(), "system.d
 http_client: httpx.AsyncClient = None
 log_clients = set()
 
-# Mimir 3-Tier Multi-Target Route Mapping
+# Mimir 3-Tier Multi-Target Route Mapping + OpenRouter Slugs
 MODEL_ROLE_MAP = {
     "mimir-proxy": "chat",
     "mimir-chat": "chat",
@@ -37,16 +37,21 @@ MODEL_ROLE_MAP = {
     "vibe": "vibe",
     "mimir-agent": "agent",
     "agent": "agent",
+    "google/gemma-4-26b-a4b-it:free": "chat",
+    "google/gemma-3-27b-it:free": "chat",
+    "cohere/north-mini-code:free": "vibe",
+    "xingchen-agi/xing4.0-29b-a4b:free": "agent",
 }
 
-async def get_system_db() -> aiosqlite.Connection:
-    conn = await aiosqlite.connect(SYSTEM_DB_PATH)
-    conn.row_factory = aiosqlite.Row
-    return conn
+@asynccontextmanager
+async def get_system_db():
+    async with aiosqlite.connect(SYSTEM_DB_PATH) as conn:
+        conn.row_factory = aiosqlite.Row
+        await conn.execute("PRAGMA foreign_keys = ON;")
+        yield conn
 
 async def init_system_db():
-    async with await get_system_db() as conn:
-        await conn.execute("PRAGMA foreign_keys = ON;")
+    async with get_system_db() as conn:
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS upstream_providers (
                 id TEXT PRIMARY KEY,
@@ -82,7 +87,6 @@ async def init_system_db():
                 created_at TEXT DEFAULT (DATETIME('now'))
             );
         """)
-        # Workspace Persistence Table to prevent tab-switching state loss
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS workspace_sessions (
                 session_key TEXT PRIMARY KEY,
@@ -93,10 +97,9 @@ async def init_system_db():
         """)
         await conn.commit()
 
-    # Automatically scan /directives folder and sync agent JSON files into system.db
     directives = scan_directives_directory("directives")
     if directives:
-        async with await get_system_db() as conn:
+        async with get_system_db() as conn:
             for d in directives:
                 await conn.execute("""
                     INSERT INTO agents (id, name, role, status, description, config)
@@ -177,11 +180,9 @@ async def stream_logs(request: Request):
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
-# --- Workspace State Persistence Endpoints (Stops Tab-Switching Data Loss) ---
-
 @app.get("/api/workspace/{session_key}")
 async def get_workspace_state(session_key: str):
-    async with await get_system_db() as conn:
+    async with get_system_db() as conn:
         async with conn.execute("SELECT state_data FROM workspace_sessions WHERE session_key = ?;", (session_key,)) as cursor:
             row = await cursor.fetchone()
             if not row:
@@ -194,7 +195,7 @@ async def save_workspace_state(session_key: str, request: Request):
     tab_name = body.get("tabName", "vibe")
     state_payload = json.dumps(body.get("state", {}))
     
-    async with await get_system_db() as conn:
+    async with get_system_db() as conn:
         await conn.execute("""
             INSERT INTO workspace_sessions (session_key, tab_name, state_data, updated_at)
             VALUES (?, ?, ?, DATETIME('now'))
@@ -207,11 +208,9 @@ async def save_workspace_state(session_key: str, request: Request):
         
     return {"status": "success", "session_key": session_key}
 
-# --- Providers Endpoints ---
-
 @app.get("/api/providers")
 async def get_providers():
-    async with await get_system_db() as conn:
+    async with get_system_db() as conn:
         query = """
             SELECT 
                 p.id,
@@ -250,7 +249,7 @@ async def add_provider(request: Request):
     data = await request.json()
     provider_id = str(uuid.uuid4())
     
-    async with await get_system_db() as conn:
+    async with get_system_db() as conn:
         await conn.execute("""
             INSERT INTO upstream_providers (id, name, base_url, api_key, enabled)
             VALUES (?, ?, ?, ?, ?)
@@ -278,7 +277,7 @@ async def add_provider(request: Request):
 
 @app.delete("/api/providers/{provider_id}")
 async def delete_provider(provider_id: str):
-    async with await get_system_db() as conn:
+    async with get_system_db() as conn:
         cursor = await conn.execute("DELETE FROM upstream_providers WHERE id = ?;", (provider_id,))
         await conn.commit()
         if cursor.rowcount == 0:
@@ -288,7 +287,7 @@ async def delete_provider(provider_id: str):
 
 @app.get("/api/providers/{provider_id}/test")
 async def test_provider_connection(provider_id: str):
-    async with await get_system_db() as conn:
+    async with get_system_db() as conn:
         async with conn.execute("SELECT name, base_url, api_key FROM upstream_providers WHERE id = ?;", (provider_id,)) as cursor:
             row = await cursor.fetchone()
             if not row:
@@ -325,7 +324,7 @@ async def test_provider_connection(provider_id: str):
 
 @app.get("/api/agents")
 async def get_agents():
-    async with await get_system_db() as conn:
+    async with get_system_db() as conn:
         async with conn.execute("SELECT * FROM agents ORDER BY created_at DESC;") as cursor:
             rows = await cursor.fetchall()
             results = []
@@ -340,7 +339,7 @@ async def create_agent(request: Request):
     data = await request.json()
     agent_id = str(uuid.uuid4())
     
-    async with await get_system_db() as conn:
+    async with get_system_db() as conn:
         await conn.execute("""
             INSERT INTO agents (id, name, role, status, description, config)
             VALUES (?, ?, ?, ?, ?, ?)
@@ -391,15 +390,27 @@ async def proxy_chat_completions(request: Request, credentials: HTTPAuthorizatio
     api_key = ""
     upstream_model_name = None
     
-    async with await get_system_db() as conn:
+    async with get_system_db() as conn:
+        # Try exact model match first
         async with conn.execute("""
             SELECT p.base_url, p.api_key, m.model_name
             FROM upstream_models m
             JOIN upstream_providers p ON m.provider_id = p.id
-            WHERE m.target_role = ? AND m.is_active = 1 AND p.enabled = 1
+            WHERE LOWER(m.model_name) = ? AND m.is_active = 1 AND p.enabled = 1
             ORDER BY m.created_at DESC LIMIT 1;
-        """, (target_role,)) as cursor:
+        """, (requested_model,)) as cursor:
             row = await cursor.fetchone()
+            
+        # Fallback to role-based target resolution
+        if not row:
+            async with conn.execute("""
+                SELECT p.base_url, p.api_key, m.model_name
+                FROM upstream_models m
+                JOIN upstream_providers p ON m.provider_id = p.id
+                WHERE m.target_role = ? AND m.is_active = 1 AND p.enabled = 1
+                ORDER BY m.created_at DESC LIMIT 1;
+            """, (target_role,)) as cursor:
+                row = await cursor.fetchone()
             
         if not row and target_role != "chat":
             async with conn.execute("""
@@ -532,7 +543,10 @@ async def proxy_openai_routes(path: str, request: Request, credentials: HTTPAuth
             "data": [
                 {"id": "mimir-proxy", "object": "model", "created": 0, "owned_by": "mimir"},
                 {"id": "mimir-vibe", "object": "model", "created": 0, "owned_by": "mimir"},
-                {"id": "mimir-agent", "object": "model", "created": 0, "owned_by": "mimir"}
+                {"id": "mimir-agent", "object": "model", "created": 0, "owned_by": "mimir"},
+                {"id": "google/gemma-4-26b-a4b-it:free", "object": "model", "created": 0, "owned_by": "openrouter"},
+                {"id": "cohere/north-mini-code:free", "object": "model", "created": 0, "owned_by": "openrouter"},
+                {"id": "xingchen-agi/xing4.0-29b-a4b:free", "object": "model", "created": 0, "owned_by": "openrouter"}
             ]
         })
 
