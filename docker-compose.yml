@@ -47,6 +47,7 @@ services:
       - mimir-network
 
 volumes:
+  mimir_data:
   postgres_data:
     driver: local
 
