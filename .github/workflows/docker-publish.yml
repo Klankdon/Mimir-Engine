@@ -1,10 +1,9 @@
-name: Publish Docker Image
-
 on:
   release:
     types: [published]
   push:
     branches: [ "main" ]
+    tags: [ 'v*' ] # <-- Catches any version tags like v2.3.0
 
 jobs:
   build-and-push:
@@ -29,11 +28,21 @@ jobs:
           username: ${{ steps.string.outputs.actor_lowercase }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Extract Docker Metadata (Tags & Labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/klankdon/mimir-engine
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha,format=long
+            type=raw,value=latest,enable={{is_default_branch}}
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          tags: |
-            ghcr.io/klankdon/mimir-engine:latest
-            ghcr.io/klankdon/mimir-engine:${{ github.sha }}           
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
