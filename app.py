@@ -529,9 +529,12 @@ async def proxy_chat_completions(request: Request, credentials: HTTPAuthorizatio
                     )
             except Exception as e:
                 if retry_count >= MAX_RETRIES or (isinstance(e, HTTPException) and e.status_code < 400):
+                    # Yield the actual error so the UI shows it instead of hanging
+                    err_msg = str(e.detail) if isinstance(e, HTTPException) else str(e)
+                    yield f'data: {json.dumps({"error": err_msg})}\n\n'.encode("utf-8")
                     break
                 retry_count += 1
-                await asyncio.sleep(1)
+                await asyncio.sleep(1))
 
     return StreamingResponse(stream_generator(), media_type="text/event-stream")
 
