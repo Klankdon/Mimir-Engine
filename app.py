@@ -454,6 +454,9 @@ async def proxy_chat_completions(request: Request, credentials: HTTPAuthorizatio
 
     if upstream_model_name:
         payload["model"] = upstream_model_name
+    elif payload.get("model") in MODEL_ROLE_MAP and "/" not in payload.get("model", ""):
+        # Prevent sending internal slugs like "mimir-proxy" directly to OpenRouter
+        payload["model"] = "gpt-4o-mini" # or an OpenRouter free default like "google/gemma-2-9b-it:free"
 
     session_id = payload.get("user", "default_session")
     if not payload.get("model"):
