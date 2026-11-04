@@ -167,4 +167,20 @@
 						<button
 							type="button"
 							onclick={() => (showModal = false)}
-							class="px-4 py-2 bg-
+							class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-sm font-medium transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-medium transition-colors shadow-lg shadow-indigo-600/20"
+              >
+                Save Agent
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    {/if}
+  </div>
+</div>
