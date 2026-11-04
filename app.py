@@ -537,7 +537,7 @@ async def proxy_chat_completions(request: Request, credentials: HTTPAuthorizatio
                     yield f'data: {json.dumps({"error": err_msg})}\n\n'.encode("utf-8")
                     break
                 retry_count += 1
-                await asyncio.sleep(1))
+                await asyncio.sleep(1)
 
     return StreamingResponse(stream_generator(), media_type="text/event-stream")
 
